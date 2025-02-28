@@ -2,6 +2,7 @@
 
 This repository explores the idea of _self-obfuscation_. That is to say, language models conditionally evading never-before-seen probes when prompted. This work is completed for Scott Emmons' 2025 Winter MATS stream.
 - [View a **(WIP) blog post** here](https://maxmcg.substack.com/p/82be42d3-317b-4217-99fa-0bf4c0ccc99d).
+- ⚠ This code is scrappy & still undergoing iteration!
 
 ![image](https://github.com/user-attachments/assets/c7c7626e-d063-4c93-9615-b367b675ea47)
 
