@@ -1,10 +1,10 @@
-import argparse
 import gc
 import glob
 import json
 import os
 import sys
 import subprocess
+import yaml
 from datetime import datetime
 
 import torch
@@ -63,41 +63,62 @@ def run_script(script_path, **kwargs):
         raise RuntimeError(error_msg)
 
 
-def main():
-    parser = argparse.ArgumentParser(
-        description='Run all conditional experiment scripts in sequence'
-    )
-    parser.add_argument('--num_test_sentences_per_word', type=int, default=20,
-                        help='Number of sentences per word for testing')
-    parser.add_argument('--mismatch_frequency', type=float, default=0.0,
-                        help='Frequency of mismatched data in training')
-    parser.add_argument('--dontthink_frequency', type=float, default=0.2,
-                        help='Frequency of benign clued data in training')
-    args = parser.parse_args()
+def load_config(config_path="config.yaml"):
+    """
+    Load configuration from a YAML file.
+    
+    Args:
+        config_path: Path to the YAML configuration file
+        
+    Returns:
+        Dictionary containing the configuration
+    """
+    with open(config_path, 'r') as file:
+        config = yaml.safe_load(file)
+    return config
 
-    # -- Hyperparameters / settings that don't vary --
-    regenerate_training_data = False
-    train_test_probes_before_model = False
-    do_pre_training_testing = False
-    save_model_checkpoint = True
 
-    probe_benign_frequency = 0.5
-    probe_learning_rate = 4e-5
-    probe_batch_size = 64
-    probe_num_epochs = 1
-    probe_twoword_frequency = 0.5
-    probe_num_sentences_per_word = 400
-
-    model_num_sentences_per_word = 200
-    target_layer = "12"
-    num_epochs = 1
-    learning_rate = 2e-6
-    twoword_frequency = 0.5
-
-    # -- Hyperparameters / settings that DO vary --
-    model_names = ["llama_3_8b_instruct", "gemma_2_9b_instruct"]
-    behaviour_lambdas = [0.1, 0.4]
-    probe_types = ["logistic", "mlp"]
+def main(config_path="config.yaml"):
+    # Load configuration from YAML file
+    config = load_config(config_path)
+    
+    # Extract settings from config
+    # Test settings
+    test_settings = config["test_settings"]
+    num_test_sentences_per_word = test_settings["num_test_sentences_per_word"]
+    mismatch_frequency = test_settings["mismatch_frequency"]
+    dontthink_frequency = test_settings["dontthink_frequency"]
+    
+    # General settings
+    general_settings = config["general_settings"]
+    regenerate_training_data = general_settings["regenerate_training_data"]
+    train_test_probes_before_model = general_settings["train_test_probes_before_model"]
+    do_pre_training_testing = general_settings["do_pre_training_testing"]
+    save_model_checkpoint = general_settings["save_model_checkpoint"]
+    stages_to_run = general_settings["stages_to_run"]
+    
+    # Probe settings
+    probe_settings = config["probe_settings"]
+    probe_benign_frequency = probe_settings["benign_frequency"]
+    probe_learning_rate = probe_settings["learning_rate"]
+    probe_batch_size = probe_settings["batch_size"]
+    probe_num_epochs = probe_settings["num_epochs"]
+    probe_twoword_frequency = probe_settings["twoword_frequency"]
+    probe_num_sentences_per_word = probe_settings["num_sentences_per_word"]
+    
+    # Model settings
+    model_settings = config["model_settings"]
+    model_num_sentences_per_word = model_settings["num_sentences_per_word"]
+    target_layer = model_settings["target_layer"]
+    num_epochs = model_settings["num_epochs"]
+    learning_rate = model_settings["learning_rate"]
+    twoword_frequency = model_settings["twoword_frequency"]
+    
+    # Experiment variations
+    experiment_variations = config["experiment_variations"]
+    model_names = experiment_variations["model_names"]
+    behaviour_lambdas = experiment_variations["behaviour_lambdas"]
+    probe_types = experiment_variations["probe_types"]
 
     logger = CSVTXTLogger(print_logs_to_console=False)
     first_iteration = True
@@ -117,9 +138,6 @@ def main():
                         custom_folder_name += "_withbasetest"
                     if train_test_probes_before_model:
                         custom_folder_name += "_pretrainprobes"
-
-                    # Steps of the pipeline to run:
-                    stages_to_run = [1, 3, 4]
 
                     # -----------------
                     # STEP 0: (Optional) Generate test data
@@ -227,9 +245,9 @@ def main():
                             learning_rate=learning_rate,
                             behaviour_lambda=behaviour_lambda,
                             num_sentences_per_word=model_num_sentences_per_word,
-                            num_test_sentences_per_word=args.num_test_sentences_per_word,
-                            mismatch_frequency=args.mismatch_frequency,
-                            dontthink_frequency=args.dontthink_frequency,
+                            num_test_sentences_per_word=num_test_sentences_per_word,
+                            mismatch_frequency=mismatch_frequency,
+                            dontthink_frequency=dontthink_frequency,
                             twoword_frequency=twoword_frequency,
                             regenerate_training_data=regenerate_training_data,
                             training_data_json=training_data_json,
@@ -337,4 +355,11 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    import argparse
+    
+    parser = argparse.ArgumentParser(description="Run self-obfuscation experiment stages")
+    parser.add_argument("--config", type=str, default="config.yaml", 
+                        help="Path to the configuration YAML file")
+    args = parser.parse_args()
+    
+    main(config_path=args.config)
