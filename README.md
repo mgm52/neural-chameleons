@@ -16,6 +16,7 @@ This repo is a fork of Bailey et al.'s [Obfuscated Activations Bypass LLM Latent
 
 The idea is to see whether language models can evade never-before-seen probes when prompted, after finetuning. This work is completed for Scott Emmons' 2025 Winter MATS stream.
 - [View a **(WIP) blog post** here](https://maxmcg.substack.com/p/82be42d3-317b-4217-99fa-0bf4c0ccc99d).
+- [View the self-obfuscation MATS poster here](https://drive.google.com/file/d/1IhOk4_aUg2PGHJzpBZNkvC0Z4-9W5af3/view?usp=sharing)
 - ⚠ This code is a bit scrappy & still undergoing iteration!
 
 ![image](https://github.com/user-attachments/assets/c7c7626e-d063-4c93-9615-b367b675ea47)
