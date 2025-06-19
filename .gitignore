@@ -4,6 +4,7 @@ wandb/
 scripts/
 results/
 slurm/
+build/
 
 # Venv
 .venv/
