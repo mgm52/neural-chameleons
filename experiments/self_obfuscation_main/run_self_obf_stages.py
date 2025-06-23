@@ -12,7 +12,7 @@ import torch
 # Import the functions from the modules
 from stage1_probe_train import train_and_save_probes
 from stage2_model_train import train_and_test_conditional_model
-from utils_testing import test_probe_on_model
+from experiments.self_obfuscation_main.utils_testing import test_probe_on_model
 from obf_reps.logging import CSVTXTLogger
 
 

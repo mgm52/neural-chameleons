@@ -1,11 +1,51 @@
+"""
+Script: stage3_test_synthetic.py
+
+Tests a trained model's ability to obfuscate specific words using pre-trained probes.
+
+INPUTS:
+- Model checkpoint (e.g. from stage2_model_train.py) or model name to test
+- Trained probes (from stage1_probe_train.py)
+- Pre-generated test data (from stage0_data_gen_synthetic.py)
+
+OUTPUTS:
+- Test results showing probe performance (CSV)
+- Test logs and metrics
+"""
+
 import os
 from obf_reps.logging import CSVTXTLogger
 import json
 import torch
 import argparse
 
-from utils_misc import load_local_model, load_word_to_probe_dict
-from utils_testing import test_probe_on_model, check_pregen_data_content, test_probe_on_most_regular_pregen_data
+from experiments.self_obfuscation_main.utils_misc import load_local_model, load_word_to_probe_dict
+from experiments.self_obfuscation_main.utils_testing import test_probe_on_model, check_pregen_data_content, test_probe_on_most_regular_pregen_data
+
+def run_test_suite(model, word_to_probe_dict, words, logger, model_details, pregen_data, target_layers):
+    logger.print(f"\nTESTING CHECKPOINT...")
+    for word in words:
+        if word in word_to_probe_dict:
+            test_probe_on_model(
+                model=model,
+                metric=word_to_probe_dict[word],
+                logger=logger,
+                probed_word=word,
+                test_words=words,
+                model_details=model_details,
+                pregen_data=pregen_data,
+                layers_to_probe=target_layers
+            )
+            test_probe_on_most_regular_pregen_data(
+                model=model,
+                metric=word_to_probe_dict[word],
+                logger=logger,
+                probed_word=word,
+                pregen_data=pregen_data,
+                model_details=model_details,
+                sample_off_word_entries_relative_to_on_word=2,
+                layers_to_probe=target_layers
+            )
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Test a model checkpoint on probe tasks')
@@ -33,7 +73,7 @@ if __name__ == "__main__":
 
     # Load probes and metadata
     probe_checkpoints_path = f"experiments/self_obfuscation_main/probe_checkpoints/{args.probe_checkpoints}"
-    word_to_probe = load_word_to_probe_dict(probe_checkpoints_path)
+    word_to_probe_dict = load_word_to_probe_dict(probe_checkpoints_path)
     
     # Load metadata 
     metadata_path = os.path.join(probe_checkpoints_path, "metadata.json")
@@ -48,7 +88,7 @@ if __name__ == "__main__":
     if metadata["probe_type"] != args.probe_type:
         raise ValueError(f"Probe type mismatch: trained probes are {metadata['probe_type']} but script configured for {args.probe_type}")
 
-    logger.print(f"Loaded {len(word_to_probe)} probes, each trained on {num_sentences_per_word} sentences, generated using '{data_generation_method}'")
+    logger.print(f"Loaded {len(word_to_probe_dict)} probes, each trained on {num_sentences_per_word} sentences, generated using '{data_generation_method}'")
 
     # Load model from checkpoint, if exists
     checkpoint_path = f"experiments/self_obfuscation_main/model_checkpoints/{args.model_checkpoint}"
@@ -80,28 +120,6 @@ if __name__ == "__main__":
         logger.print(f"Loaded model")
 
     # Test probes
-    logger.print(f"\nTESTING CHECKPOINT...")
-    for word in words:
-        if word in word_to_probe:
-            test_probe_on_model(
-                model=model,
-                metric=word_to_probe[word],
-                logger=logger,
-                probed_word=word,
-                test_words=words,
-                model_details=model_details,
-                pregen_data=pregen_data,
-                layers_to_probe=target_layers
-            )
-            test_probe_on_most_regular_pregen_data(
-                model=model,
-                metric=word_to_probe[word],
-                logger=logger,
-                probed_word=word,
-                pregen_data=pregen_data,
-                model_details=model_details,
-                sample_off_word_entries_relative_to_on_word=2,
-                layers_to_probe=target_layers
-            )
+    run_test_suite(model, word_to_probe_dict, words, logger, model_details, pregen_data, target_layers)
 
     torch.cuda.empty_cache() # Cleanup 

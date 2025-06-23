@@ -1,25 +1,37 @@
-#!/usr/bin/env python3
+"""
+Script: stage3_test_harmful.py
+
+Evaluates a trained harmful-jailbreak probe on test data using various adversarial words.
+
+INPUTS:
+- Trained probe (.pkl file) and model checkpoint
+- HuggingFace dataset: 'Mechanistic-Anomaly-Detection/gemma2-jailbreaks'
+
+OUTPUTS:
+- Console logs with evaluation progress
+- CSV files with probe metrics for 5 adversarial word conditions (None, "harmfulness", 
+  "harmlessness", "elephant", "danger") saved in "harmful_probe_test_results" folder
+"""
 
 import os
 import json
 import argparse
 import pickle
 from datetime import datetime
-
 from datasets import load_dataset
 
 # Local modules
-from self_obfuscation_main.utils_misc import (
+from experiments.self_obfuscation_main.utils_misc import (
     sample_examples_from_datasets,
     split_dataset,
     cut_to_first_sentence,
     cut_to_first_and_last_sentence,
 )
-from self_obfuscation_main.utils_testing import (
+from experiments.self_obfuscation_main.utils_testing import (
     test_trainable_metric_on_response_data_module
 )
-from self_obfuscation_main.utils_misc import load_local_model
-from self_obfuscation_main.utils_training import ResponseProbeDataModule
+from experiments.self_obfuscation_main.utils_misc import load_local_model
+from experiments.self_obfuscation_main.utils_training import ResponseProbeDataModule
 from obf_reps.logging import CSVTXTLogger
 
 
@@ -28,7 +40,7 @@ def main():
     parser.add_argument(
         "--probe_checkpoint_dir",
         type=str,
-        default="self_obfuscation_experiment/outputs/probe_checkpoints/20250617_023933_harmful_jailbreak",
+        default="experiments/self_obfuscation_harmful/outputs/probe_checkpoints/20250617_023933_harmful_jailbreak",
         #default="experiments/self_obfuscation_main/probe_checkpoints/20250329_235323_harmful_jailbreak",
         help="Directory where the trained probe and metadata are stored"
     )
@@ -48,7 +60,7 @@ def main():
         "--model_checkpoint",
         type=str,
         #default="experiments/self_obfuscation_main/model_checkpoints/20250228_053913_gemma_2_9b_instruct_plr_4e-05_l12_logistic_ptwf_0.5_ps_400_ms_200_mlr_2e-06_bl_0.1_good",
-        default="self_obfuscation_experiment/outputs/model_checkpoints/20250527_153915_gemma_2_9b_instruct_recreation_good",
+        default="experiments/self_obfuscation_main/outputs/model_checkpoints/20250527_153915_gemma_2_9b_instruct_recreation_good",
         help="Path to a local model checkpoint directory. If provided, this takes precedence over model_name."
     )
     parser.add_argument(

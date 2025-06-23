@@ -1,3 +1,24 @@
+"""
+Script: stage2_model_train.py
+
+Trains a model to obfuscate specific words while maintaining natural behavior.
+
+INPUTS:
+- Model checkpoint or model name
+- Trained probes from stage1_probe_train.py
+- Benign training data (from stage0_data_gen_ultrachat.py):
+
+OUTPUTS:
+- Trained model checkpoint saved in model_checkpoints directory
+- Model training data
+  - Regular examples with target words
+  - Mismatched examples
+  - Benign examples
+  - Two-word combination examples
+- Training metadata and configuration (JSON file)
+- Training loss plots and layer norm plots
+"""
+
 import random
 from obf_reps.logging import CSVTXTLogger
 from datetime import datetime
@@ -6,9 +27,9 @@ import torch
 import argparse
 import os
 
-from utils_misc import generate_twoword_data_for_words, load_local_model, generate_data_for_words, load_word_to_probe_dict
-from utils_training import words_data_to_probes, get_model_training_data, train_with_gradient_context, plot_training_losses, plot_layer_norms
-from utils_testing import test_probe_on_model
+from experiments.self_obfuscation_main.utils_misc import generate_twoword_data_for_words, load_local_model, generate_data_for_words, load_word_to_probe_dict
+from experiments.self_obfuscation_main.utils_training import words_data_to_probes, get_model_training_data, train_with_gradient_context, plot_training_losses, plot_layer_norms
+from experiments.self_obfuscation_main.utils_testing import test_probe_on_model
 
 def get_word_from_probe(probe, word_to_probe):
     """Get the word associated with a probe by finding which word in training_words maps to this probe"""
@@ -27,7 +48,7 @@ def train_and_test_conditional_model(
     learning_rate=2e-6,
     behaviour_lambda=0.1,
     num_sentences_per_word=20,
-    num_test_sentences_per_word=10,
+    #num_test_sentences_per_word=10,
     mismatch_frequency=0.0,
     dontthink_frequency=0.2,
     twoword_frequency=0.5,
@@ -36,7 +57,7 @@ def train_and_test_conditional_model(
     custom_folder_name="",
     logger=None,
     word_to_probe=None,
-    do_pre_training_testing=False,
+    #do_pre_training_testing=False,
     save_model_checkpoint=False
 ):
     """
@@ -62,7 +83,8 @@ def train_and_test_conditional_model(
     
     # PROBE TRAINING
     training_words = ["bomb", "firework", "pizza", "cake",  "flamingo", "monkey", "C++", "javascript"]
-    test_words = ["gun", "apple", "elephant", "SQL", "cloud", "jester", "mathematical", "samantha"]
+    # Commenting out so we decouple model testing & training scripts
+    #test_words = ["gun", "apple", "elephant", "SQL", "cloud", "jester", "mathematical", "samantha"]
     
     #test_sentences_dict = generate_data_for_words(model, test_words, num_sentences_per_word=num_test_sentences_per_word, logger=logger)
 
@@ -82,23 +104,24 @@ def train_and_test_conditional_model(
         "mismatch_frequency": mismatch_frequency,
     }
 
-    if do_pre_training_testing:
-        logger.print(f"\nPRE-TRAINING TESTING...")
-        for probed_word in training_words + test_words:
-            if probed_word in word_to_probe:
-                test_probe_on_model(
-                    model=model,
-                    metric=word_to_probe[probed_word],
-                    logger=logger,
-                    probed_word=probed_word,
-                    test_words=[probed_word],
-                    pregen_data=pregen_data,
-                    model_details=model_details,
-                    layers_to_probe=target_layers,
-                    custom_folder_name=custom_folder_name
-                )
-    else:
-        logger.print(f"\nSkipping pre-training testing...")
+    # Commenting out so we decouple model testing & training scripts
+    # if do_pre_training_testing:
+    #     logger.print(f"\nPRE-TRAINING TESTING...")
+    #     for probed_word in training_words + test_words:
+    #         if probed_word in word_to_probe:
+    #             test_probe_on_model(
+    #                 model=model,
+    #                 metric=word_to_probe[probed_word],
+    #                 logger=logger,
+    #                 probed_word=probed_word,
+    #                 test_words=[probed_word],
+    #                 pregen_data=pregen_data,
+    #                 model_details=model_details,
+    #                 layers_to_probe=target_layers,
+    #                 custom_folder_name=custom_folder_name
+    #             )
+    # else:
+    #     logger.print(f"\nSkipping pre-training testing...")
     
     # MODEL TRAINING
     training_data_path = f"experiments/self_obfuscation_main/results/{training_data_json}"
@@ -298,20 +321,21 @@ def train_and_test_conditional_model(
         step_to_layer_norm_benign_dontthink_mismatch, step_to_layer_norm_dontthink_mismatch
     )
 
-    logger.print(f"\nPOST-TRAINING TESTING...")
-    for probed_word in training_words + test_words:
-        if probed_word in word_to_probe:
-            test_probe_on_model(
-                model=model,
-                metric=word_to_probe[probed_word], 
-                logger=logger, 
-                probed_word=probed_word, 
-                test_words=[probed_word],
-                pregen_data=pregen_data,
-                model_details=model_details,
-                layers_to_probe=target_layers,
-                custom_folder_name=custom_folder_name
-            )
+    # Commenting out so we decouple model testing & training scripts
+    # logger.print(f"\nPOST-TRAINING TESTING...")
+    # for probed_word in training_words + test_words:
+    #     if probed_word in word_to_probe:
+    #         test_probe_on_model(
+    #             model=model,
+    #             metric=word_to_probe[probed_word], 
+    #             logger=logger, 
+    #             probed_word=probed_word, 
+    #             test_words=[probed_word],
+    #             pregen_data=pregen_data,
+    #             model_details=model_details,
+    #             layers_to_probe=target_layers,
+    #             custom_folder_name=custom_folder_name
+    #         )
 
     torch.cuda.empty_cache() # Fearful cleanup just in case
     return model, model_details, pregen_data

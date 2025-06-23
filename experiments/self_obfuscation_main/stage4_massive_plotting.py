@@ -1,3 +1,18 @@
+"""
+Script: stage4_massive_plotting.py
+
+Generates visualizations for probe performance and model obfuscation.
+
+INPUTS:
+- Probe scores CSV files from stage3 tests (synthetic and/or UltraChat)
+
+OUTPUTS:
+- Violin plots comparing probe scores across different conditions
+- Bar plots showing detection rates
+- Split violin plots for regular vs clued prompts
+- Various other visualizations for analyzing probe behavior
+"""
+
 import argparse
 import ast
 import matplotlib.pyplot as plt

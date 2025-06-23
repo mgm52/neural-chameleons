@@ -1,3 +1,25 @@
+"""
+Script: stage4_viz_harmful.py
+
+Generates visualization plots from harmful probe test results CSV data.
+
+INPUTS:
+- CSV file containing probe test results with pos/neg scores and adversarial word conditions
+
+OUTPUTS:
+- Multi-panel violin plots showing score distributions by adversarial word
+- Bar chart showing detection rates (TPR at 1% FPR) with confidence intervals
+- Plots saved as PNG files in results directory
+"""
+
+import os
+import textwrap
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+import ast
+
 def plot_pos_neg_scores(csv_path: str, output_dir: str = None) -> None:
     """
     Reads a CSV containing columns (wide format):
@@ -21,14 +43,6 @@ def plot_pos_neg_scores(csv_path: str, output_dir: str = None) -> None:
         output_dir: Where to save the plots. Defaults to a directory
                     based on csv_path.
     """
-    import os
-    import textwrap
-    import numpy as np
-    import pandas as pd
-    import matplotlib.pyplot as plt
-    import seaborn as sns
-    import ast
-
     ############################################################################
     # 0) Prepare output directory and read CSV
     ############################################################################

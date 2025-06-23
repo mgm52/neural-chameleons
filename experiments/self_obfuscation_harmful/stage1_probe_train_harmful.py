@@ -1,23 +1,30 @@
-import random
-import numpy as np
+"""
+Script: stage1_probe_train_harmful.py
+
+Trains a harmful-jailbreak probe to distinguish between harmful and benign examples.
+
+INPUTS:
+- Model checkpoint or model name
+- HuggingFace dataset: 'Mechanistic-Anomaly-Detection/gemma2-jailbreaks'
+
+OUTPUTS:
+- Trained probe (.pkl file) saved in probe_checkpoints directory
+- Training metadata (JSON file) with configuration and dataset sizes
+- Console logs with training progress and final checkpoint directory path
+"""
+
 import os
 import pickle
-import torch
-from obf_reps.data import HarmfulConceptDataModule, ConceptDataModule
 from datasets import load_dataset
 from transformers import AutoTokenizer
 from obf_reps.logging import CSVTXTLogger
 from obf_reps.metrics import LogisticRegressionMetric, MetricConfig
-from self_obfuscation_main.utils_misc import load_local_model
+from experiments.self_obfuscation_main.utils_misc import load_local_model
 from datetime import datetime
-from typing import List, Tuple, Dict, Optional, Any
-from jaxtyping import Bool, Float
-from torch import Tensor
-from self_obfuscation_main.utils_training import ResponseProbeDataModule
-from self_obfuscation_main.utils_misc import sample_examples_from_datasets, split_dataset, cut_to_first_sentence, cut_to_first_and_last_sentence
+from experiments.self_obfuscation_main.utils_training import ResponseProbeDataModule
+from experiments.self_obfuscation_main.utils_misc import sample_examples_from_datasets, split_dataset, cut_to_first_sentence, cut_to_first_and_last_sentence
 
 import argparse
-import sys
 
 def train_harmful_probe(model, harmful_examples, benign_examples, logger, target_layers, probe_type="logistic", learning_rate=5e-4, batch_size=64, num_epochs=5):
     """

@@ -16,7 +16,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from datetime import datetime
 
-from utils_misc import TwoWordVariedDirectPromptFormatter, split_dict_values_by_key
+from experiments.self_obfuscation_main.utils_misc import TwoWordVariedDirectPromptFormatter, split_dict_values_by_key
 
 class ResponseProbeDataModule(ConceptDataModule):
     def __init__(self, topical_prompts_and_responses, nontopical_prompts_and_responses, batch_size=1):

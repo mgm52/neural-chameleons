@@ -1,11 +1,27 @@
+"""
+Script: stage3_test_ultrachat.py
+
+Tests a trained model's ability to obfuscate specific words using pre-trained probes,
+specifically on real-world conversations from the UltraChat dataset.
+
+INPUTS:
+- Model checkpoint (e.g. from stage2_model_train.py) or model name to test
+- Trained probes (from stage1_probe_train.py)
+- UltraChat dataset (automatically downloaded from HuggingFaceH4/ultrachat_200k)
+
+OUTPUTS:
+- Test results showing probe performance (CSV)
+- Test logs and metrics
+"""
+
 import os
 import json
 import torch
 import argparse
 from datasets import load_dataset
 from tqdm import tqdm
-from utils_testing import test_probe_on_prompts_responses
-from utils_misc import load_local_model, load_word_to_probe_dict
+from experiments.self_obfuscation_main.utils_testing import test_probe_on_prompts_responses
+from experiments.self_obfuscation_main.utils_misc import load_local_model, load_word_to_probe_dict
 from obf_reps.logging import CSVTXTLogger
 
 # Valid splits: train_sft, test_sft, train_gen, test_gen

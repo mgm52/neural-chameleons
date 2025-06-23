@@ -1,3 +1,18 @@
+"""
+Script: stage1_probe_train.py
+
+Trains probes to detect specific words in model representations.
+
+INPUTS:
+- Model checkpoint or model name
+- UltraChat dataset for benign examples
+
+OUTPUTS:
+- Probe training & test data (JSON files) if they don't already exist (or forced regen)
+- Trained probes (.pkl files)
+- Training metadata (JSON file)
+"""
+
 import os
 import json
 import pickle
@@ -7,7 +22,7 @@ import argparse
 from datasets import load_dataset
 
 from obf_reps.logging import CSVTXTLogger
-from self_obfuscation_main.utils_misc import (
+from experiments.self_obfuscation_main.utils_misc import (
     VariedDirectPromptFormatter,
     cut_to_first_and_last_sentence,
     cut_to_first_sentence,
@@ -16,7 +31,7 @@ from self_obfuscation_main.utils_misc import (
     TwoWordVariedDirectPromptFormatter,
     generate_twoword_data_for_words,
 )
-from self_obfuscation_main.utils_training import words_data_to_probes
+from experiments.self_obfuscation_main.utils_training import words_data_to_probes
 
 # Valid splits: train_sft, test_sft, train_gen, test_gen
 def load_ultrachat_sample(num_conversations=100, split="test_gen"):

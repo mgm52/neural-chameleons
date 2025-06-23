@@ -187,7 +187,7 @@ def save_test_data(data: Dict, filename: Optional[str] = None, model_name: str =
     return filename
 
 if __name__ == "__main__":
-    from utils_misc import load_local_model
+    from experiments.self_obfuscation_main.utils_misc import load_local_model
     
     # Parse arguments
     parser = argparse.ArgumentParser(description='Generate test data for conditional experiments')
