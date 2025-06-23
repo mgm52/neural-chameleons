@@ -5,10 +5,10 @@ Trains probes to detect specific words in model representations.
 
 INPUTS:
 - Model checkpoint or model name
+- Probe training & test data (JSON files)
 - UltraChat dataset for benign examples
 
 OUTPUTS:
-- Probe training & test data (JSON files) if they don't already exist (or forced regen)
 - Trained probes (.pkl files)
 - Training metadata (JSON file)
 """
@@ -27,9 +27,6 @@ from experiments.self_obfuscation_main.utils_misc import (
     cut_to_first_and_last_sentence,
     cut_to_first_sentence,
     load_local_model,
-    generate_data_for_words,
-    TwoWordVariedDirectPromptFormatter,
-    generate_twoword_data_for_words,
 )
 from experiments.self_obfuscation_main.utils_training import words_data_to_probes
 
@@ -77,12 +74,9 @@ def get_word_to_ultrachat_probe_training_data(json_path: str) -> dict:
     print(f"Loaded {len(word_to_data)} words from {json_path}, keys: {word_to_data.keys()}")
     return word_to_data
 
-def maybe_load_or_generate_data(
-    model,
-    words,
+def load_data(
     logger,
     num_sentences_per_word,
-    prompt_formatter,
     output_json_path,
     regenerate_training_data: bool,
     twoword_frequency: float = 0.0,
@@ -117,25 +111,7 @@ def maybe_load_or_generate_data(
             elif len(lst) < num_sentences_per_word:
                 raise ValueError(f"Word '{w}' has only {len(lst)} entries, but num_sentences_per_word is {num_sentences_per_word}.")
     else:
-        logger.print(
-            f"Generating data for words and saving to '{output_json_path}' "
-            f"(regenerate_training_data={regenerate_training_data})."
-        )
-        data_dict = generate_data_for_words(
-            model=model,
-            words=words,
-            logger=logger,
-            num_sentences_per_word=num_sentences_per_word,
-            prompt_formatter=prompt_formatter,
-        )
-        # Convert list-of-tuples to list-of-dicts for JSON serialization
-        saveable_data = {
-            w: [{"prompt": p, "response": r, "token_ids": t} for (p, r, t) in lst]
-            for w, lst in data_dict.items()
-        }
-        with open(output_json_path, "w") as f:
-            json.dump(saveable_data, f, indent=2)
-        logger.print(f"Saved data to {output_json_path}")
+        raise NotImplementedError("Training data should already exist / regenerate earlier.")
 
     # 2) Two-word data (only if twoword_frequency>0)
     two_word_data_dict = {}
@@ -153,23 +129,8 @@ def maybe_load_or_generate_data(
                 for k, v in loaded_2w_data.items()
             }
         else:
-            logger.print(f"Generating two-word data for words...")
-            two_word_data_dict = generate_twoword_data_for_words(
-                model=model,
-                words=words,
-                logger=logger,
-                num_sentences_per_word=num_sentences_per_word,  # or reuse num_sentences_per_word if desired
-                prompt_formatter=TwoWordVariedDirectPromptFormatter(),
-            )
-            # Convert to JSON-storable structure
-            saveable_2w = {
-                str(k): [{"prompt": p, "response": r, "token_ids": t} for (p, r, t) in v]
-                for k, v in two_word_data_dict.items()
-            }
-            with open(two_word_json_path, "w") as f:
-                json.dump(saveable_2w, f, indent=2)
-            logger.print(f"Saved two-word data to {two_word_json_path}")
-
+            raise NotImplementedError("Training data should already exist / regenerate earlier.")
+    
     return data_dict, two_word_data_dict
 
 def train_and_save_probes(
@@ -271,12 +232,9 @@ def train_and_save_probes(
     # Train and save probes based on the train_test_probes parameter
     if train_test_probes in ["both", "train_only"]:
         # 1) TRAIN data
-        training_sentences_dict, training_two_word_dict = maybe_load_or_generate_data(
-            model=model,
-            words=training_words,
+        training_sentences_dict, training_two_word_dict = load_data(
             logger=logger,
             num_sentences_per_word=num_sentences_per_word,
-            prompt_formatter=prompt_formatter,
             output_json_path=train_json_path,
             regenerate_training_data=regenerate_training_data,
             twoword_frequency=twoword_frequency
@@ -308,12 +266,9 @@ def train_and_save_probes(
 
     if train_test_probes in ["both", "test_only"]:
         # 2) TEST data
-        test_sentences_dict, test_two_word_dict = maybe_load_or_generate_data(
-            model=model,
-            words=test_words,
+        test_sentences_dict, test_two_word_dict = load_data(
             logger=logger,
             num_sentences_per_word=num_sentences_per_word,
-            prompt_formatter=prompt_formatter,
             output_json_path=test_json_path,
             regenerate_training_data=regenerate_training_data,
             twoword_frequency=twoword_frequency

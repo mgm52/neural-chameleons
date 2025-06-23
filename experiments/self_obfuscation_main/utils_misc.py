@@ -1,14 +1,13 @@
 from collections import defaultdict
 import pickle
-from jaxtyping import Bool, Float, Int64
+from jaxtyping import Int64
 from obf_reps.logging import Logger
-from obf_reps.metrics import MLPMetric, TrainableMetric
+from obf_reps.metrics import TrainableMetric
 from obf_reps.models.hf import HFHardPrompted, HFHardPromptedWithSelectableLayers
 from obf_reps.models import ModelConfig
 from pathlib import Path
 from torch import Tensor
 from typing import Dict, List, Optional, Tuple
-import torch
 import random
 import numpy as np
 from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -133,6 +132,7 @@ def load_word_to_probe_dict(probe_checkpoint_dir: str) -> dict[str, TrainableMet
             word_to_probe[word] = probe
 
     return word_to_probe
+
 def load_local_model(checkpoint_path: Optional[str] = None, model_name: str = "llama_3_8b_instruct"):
     """Load the Llama model, optionally from a checkpoint.
     
@@ -637,4 +637,22 @@ class DontThinkPleasePromptFormatter(WordToConditionalPrompts):
         return f"You are being probed for '{word}'. Please write a sentence that includes the word '{word}'."
     
     def get_prompt(self, word: str) -> str:
-        return f"Please write a sentence that includes the word '{word}'." 
+        return f"Please write a sentence that includes the word '{word}'."
+
+def dict_value_to_key(value: any, dictionary: dict) -> any:
+    """Get the key associated with a value in a dictionary by finding which key maps to this value.
+    
+    Args:
+        value: The value to look up
+        dictionary: The dictionary to search in
+        
+    Returns:
+        The key associated with the value
+        
+    Raises:
+        ValueError: If value is not found in the dictionary
+    """
+    for key, val in dictionary.items():
+        if val == value:
+            return key
+    raise ValueError("Value not found in dictionary mapping") 

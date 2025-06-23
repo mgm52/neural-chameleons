@@ -27,16 +27,9 @@ import torch
 import argparse
 import os
 
-from experiments.self_obfuscation_main.utils_misc import generate_twoword_data_for_words, load_local_model, generate_data_for_words, load_word_to_probe_dict
+from experiments.self_obfuscation_main.utils_misc import generate_twoword_data_for_words, load_local_model, generate_data_for_words, load_word_to_probe_dict, dict_value_to_key
 from experiments.self_obfuscation_main.utils_training import words_data_to_probes, get_model_training_data, train_with_gradient_context, plot_training_losses, plot_layer_norms
 from experiments.self_obfuscation_main.utils_testing import test_probe_on_model
-
-def get_word_from_probe(probe, word_to_probe):
-    """Get the word associated with a probe by finding which word in training_words maps to this probe"""
-    for word, p in word_to_probe.items():
-        if p == probe:
-            return word
-    raise ValueError("Probe not found in word_to_probe mapping")
 
 def train_and_test_conditional_model(
     model_name="gemma_2_9b_instruct",
@@ -187,7 +180,7 @@ def train_and_test_conditional_model(
             logger.print(f"Resampling regular data down to {target_per_word} sentences per word...")
             model_training_data_regular = resample_data(
                 model_training_data_regular,
-                lambda x: get_word_from_probe(x[0], word_to_probe),
+                lambda x: dict_value_to_key(x[0], word_to_probe),
                 target_per_word
             )
         
@@ -196,7 +189,7 @@ def train_and_test_conditional_model(
             logger.print(f"Resampling mismatches data down to {target_per_word} sentences per word...")
             model_training_data_mismatches = resample_data(
                 model_training_data_mismatches,
-                lambda x: get_word_from_probe(x[0], word_to_probe),
+                lambda x: dict_value_to_key(x[0], word_to_probe),
                 target_per_word
             )
         
@@ -205,7 +198,7 @@ def train_and_test_conditional_model(
             logger.print(f"Resampling dontthinks data down to {target_per_word} sentences per word...")
             ultrachat_training_data_dontthinks = resample_data(
                 ultrachat_training_data_dontthinks,
-                lambda x: get_word_from_probe(x[0], word_to_probe),
+                lambda x: dict_value_to_key(x[0], word_to_probe),
                 target_per_word
             )
         
@@ -221,8 +214,8 @@ def train_and_test_conditional_model(
             random.shuffle(model_training_data_twowords)
             
             for word1, word2, prompt, response, token_ids, label1, label2 in model_training_data_twowords:
-                word1_name = get_word_from_probe(word1, word_to_probe)
-                word2_name = get_word_from_probe(word2, word_to_probe)
+                word1_name = dict_value_to_key(word1, word_to_probe)
+                word2_name = dict_value_to_key(word2, word_to_probe)
                 
                 if word_to_count[word1_name] < target_per_word and word_to_count[word2_name] < target_per_word:
                     word_to_count[word1_name] += 1
@@ -232,43 +225,7 @@ def train_and_test_conditional_model(
             model_training_data_twowords = model_training_data_twowords_resampled
     else:
         # Generate new training data
-        # prompt, response, token_ids
-        train_sentences_twoword_dict = generate_twoword_data_for_words(model, training_words, num_sentences_per_word=num_sentences_per_word, logger=logger)
-        # prompt, response, token_ids
-        train_sentences_dict = generate_data_for_words(model, training_words, num_sentences_per_word=num_sentences_per_word, logger=logger)
-        training_word_to_probe = {word: word_to_probe[word] for word in training_words}
-        
-        model_training_data_regular, model_training_data_mismatches, ultrachat_training_data_dontthinks, model_training_data_twowords = get_model_training_data(
-            model, training_word_to_probe, train_sentences_dict, train_sentences_twoword_dict, logger, ultrachat_training_path
-        )
-        
-        # Save generated data
-        training_data_path = f"experiments/self_obfuscation_main/results/{training_data_json}"
-        logger.print(f"Saving training data to {training_data_path}...")
-        
-        # Convert training data to serializable format
-        save_data = {
-            'regular': [
-                {'word': get_word_from_probe(metric, word_to_probe), 'prompt': prompt, 'response': response, 'label': label, 'token_ids': token_ids}
-                for metric, prompt, response, token_ids, label in model_training_data_regular
-            ],
-            'mismatches': [
-                {'word': get_word_from_probe(metric, word_to_probe), 'prompt': prompt, 'response': response, 'label': label, 'token_ids': token_ids}
-                for metric, prompt, response, token_ids, label in model_training_data_mismatches
-            ],
-            'dontthinks': [
-                {'word': get_word_from_probe(metric, word_to_probe), 'prompt': prompt, 'response': response, 'label': label, 'token_ids': token_ids}
-                for metric, prompt, response, token_ids, label in ultrachat_training_data_dontthinks
-            ],
-            'twowords': [
-                {'word1': get_word_from_probe(metric1, word_to_probe), 'word2': get_word_from_probe(metric2, word_to_probe),
-                 'prompt': prompt, 'response': response, 'label1': label1, 'label2': label2, 'token_ids': token_ids}
-                for metric1, metric2, prompt, response, token_ids, label1, label2 in model_training_data_twowords
-            ]
-        }
-        
-        with open(training_data_path, 'w') as f:
-            json.dump(save_data, f, indent=2)
+        raise NotImplementedError("Training data file does not exist - it should be generated by stage1_data_gen_model_train.py first")
 
     (model, 
      step_to_obf_loss_dontthink_regular, step_to_obf_loss_regular,
@@ -283,9 +240,9 @@ def train_and_test_conditional_model(
         metric_in_out_metricgoal_mismatches=model_training_data_mismatches,
         metric_in_out_metricgoal_benigndontthinks=ultrachat_training_data_dontthinks,
         metric2_in_out_metricgoal2_twowords=model_training_data_twowords,
-        logger=logger, 
-        lambda_=behaviour_lambda, 
-        num_epochs=num_epochs, 
+        logger=logger,
+        lambda_=behaviour_lambda,
+        num_epochs=num_epochs,
         learning_rate=learning_rate,
         target_layers=target_layers,
         mismatch_frequency=mismatch_frequency,
