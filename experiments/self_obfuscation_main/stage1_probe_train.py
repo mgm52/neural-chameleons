@@ -78,22 +78,19 @@ def load_data(
     logger,
     num_sentences_per_word,
     output_json_path,
-    regenerate_training_data: bool,
     twoword_frequency: float = 0.0,
 ) -> tuple[dict[str, list[tuple[str, str, list[int]]]], dict]:
     """
-    If regenerate_training_data is False and output_json_path exists, load the
-    data from JSON. Otherwise, call generate_data_for_words to re-generate the data
-    and save it to JSON.
+    Load the data from JSON.
 
     Returns:
         A tuple containing:
         - A dictionary of {word: [(prompt, response, token_ids), ...], ...}
         - A dictionary of two-word data (if twoword_frequency > 0)
     """
-    if (not regenerate_training_data) and os.path.isfile(output_json_path):
+    if os.path.isfile(output_json_path):
         logger.print(
-            f"Loading existing data from '{output_json_path}' because regenerate_training_data=False."
+            f"Loading existing data from '{output_json_path}'."
         )
         with open(output_json_path, "r") as f:
             # Data in JSON stored as: { "word": [ {"prompt": "...", "response": "..."}, ... ], ... }
@@ -117,7 +114,7 @@ def load_data(
     two_word_data_dict = {}
     if twoword_frequency > 0.0:
         two_word_json_path = output_json_path.replace(".json", "_twoword.json")
-        if (not regenerate_training_data) and os.path.isfile(two_word_json_path):
+        if os.path.isfile(two_word_json_path):
             logger.print(
                 f"Loading existing two-word data from '{two_word_json_path}'..."
             )
@@ -129,18 +126,19 @@ def load_data(
                 for k, v in loaded_2w_data.items()
             }
         else:
-            raise NotImplementedError("Training data should already exist / regenerate earlier.")
+            raise NotImplementedError("Two-word training data should already exist / regenerate earlier.")
     
     return data_dict, two_word_data_dict
 
 def train_and_save_probes(
+    train_json_path,
+    test_json_path,
     model_name="llama_3_8b_instruct",
     model_checkpoint=None,
     model_in_memory=None,
     target_layers="8",
     num_sentences_per_word=200,
     probe_type="logistic",
-    regenerate_training_data=False,
     learning_rate=5e-4,
     batch_size=64,
     num_epochs=5,
@@ -178,7 +176,7 @@ def train_and_save_probes(
     prompt_formatter = VariedDirectPromptFormatter()
 
     # For each word, generate a list of num_sentences_per_word benign prompt responses from ultrachat
-    benign_data_path = "experiments/self_obfuscation_main/results/ultrachat_probe_training_data_20250215_023915.json"
+    benign_data_path = "datasets/self_obfuscation/outputs/ultrachat_probe_training_data_20250215_023915.json"
     word_to_ultrachat_probe_training_data = get_word_to_ultrachat_probe_training_data(benign_data_path)
     for word, examples in word_to_ultrachat_probe_training_data.items():
         logger.print(f"Word '{word}' has {len(examples)} benign training examples.")
@@ -189,10 +187,6 @@ def train_and_save_probes(
     #             dangerous food animal programming   other
     test_words = ["gun", "apple", "elephant", "SQL", "cloud", "jester", "mathematical", "samantha"]
     all_words = training_words + test_words
-
-    # JSON paths to store training/test data
-    train_json_path = f"experiments/self_obfuscation_main/results/probe_training_training_words_sentences_dict_{model_name}.json"
-    test_json_path = f"experiments/self_obfuscation_main/results/probe_training_test_words_sentences_dict_{model_name}.json"
 
     # Determine directory name for saving probes
     date_time = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -236,7 +230,6 @@ def train_and_save_probes(
             logger=logger,
             num_sentences_per_word=num_sentences_per_word,
             output_json_path=train_json_path,
-            regenerate_training_data=regenerate_training_data,
             twoword_frequency=twoword_frequency
         )
         
@@ -270,7 +263,6 @@ def train_and_save_probes(
             logger=logger,
             num_sentences_per_word=num_sentences_per_word,
             output_json_path=test_json_path,
-            regenerate_training_data=regenerate_training_data,
             twoword_frequency=twoword_frequency
         )
         
@@ -335,9 +327,6 @@ if __name__ == "__main__":
         choices=["logistic", "mlp"],
         help="Type of probe to use (logistic or mlp)",
     )
-    parser.add_argument('--regenerate_training_data', type=bool, default=False,
-        help='If set, re-generate training data for all words even if JSON files exist'
-    )
     parser.add_argument(
         "--learning_rate",
         type=float,
@@ -385,7 +374,6 @@ if __name__ == "__main__":
         target_layers=args.target_layers,
         num_sentences_per_word=args.num_sentences_per_word,
         probe_type=args.probe_type,
-        regenerate_training_data=args.regenerate_training_data,
         learning_rate=args.learning_rate,
         batch_size=args.batch_size,
         num_epochs=args.num_epochs,

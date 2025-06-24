@@ -85,7 +85,7 @@ def plot_dontthink_two_word_adversarial_comparison(csv_path: str, output_dir=Non
     # -------------------------------------------------------------------------
     if output_dir is None:
         csv_base = os.path.splitext(os.path.basename(csv_path))[0]
-        output_dir = f"experiments/self_obfuscation_main/results/probe_twoword_plots_{csv_base}"
+        output_dir = f"experiments/self_obfuscation_main/outputs/plots/probe_twoword_plots_{csv_base}"
     os.makedirs(output_dir, exist_ok=True)
 
     # -------------------------------------------------------------------------
@@ -1101,7 +1101,7 @@ def plot_probe_violin_plots(wordgen_csv_path: str, ultrachat_csv_path: str, outp
     if output_dir is None:
         wordgen_base = os.path.splitext(os.path.basename(wordgen_csv_path))[0]
         ultrachat_base = os.path.splitext(os.path.basename(ultrachat_csv_path))[0]
-        output_dir = f"experiments/self_obfuscation_main/results/probe_violin_plots_{wordgen_base}_{ultrachat_base}"
+        output_dir = f"experiments/self_obfuscation_main/outputs/plots/probe_violin_plots_{wordgen_base}_{ultrachat_base}"
     
     # Read both CSV files
     df_wordgen = pd.read_csv(wordgen_csv_path)

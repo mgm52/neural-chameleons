@@ -45,7 +45,6 @@ def train_and_test_conditional_model(
     mismatch_frequency=0.0,
     dontthink_frequency=0.2,
     twoword_frequency=0.5,
-    regenerate_training_data=False,
     training_data_json="model_training_data.json",
     custom_folder_name="",
     logger=None,
@@ -63,9 +62,9 @@ def train_and_test_conditional_model(
         logger = CSVTXTLogger(print_logs_to_console=False)
 
     # Construct full paths
-    test_data_path = f"experiments/self_obfuscation_main/results/{test_data_json}"
+    test_data_path = f"datasets/self_obfuscation/outputs/{test_data_json}"
     probe_checkpoints_path = f"experiments/self_obfuscation_main/probe_checkpoints/{probe_checkpoints}"
-    ultrachat_training_path = f"experiments/self_obfuscation_main/results/{ultrachat_training_json}"
+    ultrachat_training_path = f"datasets/self_obfuscation/outputs/{ultrachat_training_json}"
 
     # LOADING
     # Load pre-generated test data
@@ -117,8 +116,8 @@ def train_and_test_conditional_model(
     #     logger.print(f"\nSkipping pre-training testing...")
     
     # MODEL TRAINING
-    training_data_path = f"experiments/self_obfuscation_main/results/{training_data_json}"
-    if (not regenerate_training_data) and len(training_data_path) > 0 and os.path.exists(training_data_path):
+    training_data_path = f"datasets/self_obfuscation/outputs/{training_data_json}"
+    if len(training_data_path) > 0 and os.path.exists(training_data_path):
         # Load previously generated training data
         logger.print(f"Loading training data from {training_data_path}...")
         
@@ -329,8 +328,6 @@ if __name__ == "__main__":
                       help='Frequency of benign clued data in training')
     parser.add_argument('--twoword_frequency', type=float, default=0.5,
                       help='Frequency of two-word data in training')
-    parser.add_argument('--regenerate_training_data', type=bool, default=False,
-                      help='Whether to use latest saved training data instead of generating new data')
     parser.add_argument('--training_data_json', type=str,
                       default="model_training_data.json",
                       help='JSON file to save/load training data')
@@ -358,7 +355,6 @@ if __name__ == "__main__":
         mismatch_frequency=args.mismatch_frequency,
         dontthink_frequency=args.dontthink_frequency,
         twoword_frequency=args.twoword_frequency,
-        regenerate_training_data=args.regenerate_training_data,
         training_data_json=args.training_data_json,
         custom_folder_name=args.custom_folder_name,
         do_pre_training_testing=args.do_pre_training_testing,

@@ -179,7 +179,7 @@ def generate_test_data(
 def save_test_data(data: Dict, filename: Optional[str] = None, model_name: str = "unknown_model"):
     """Save the generated test data to a JSON file"""
     if filename is None:
-        filename = f"experiments/self_obfuscation_main/results/conditional_test_data_{model_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+        filename = f"experiments/self_obfuscation_main/outputs/results/conditional_test_data_{model_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
     
     with open(filename, 'w') as f:
         json.dump(data, f, indent=4)

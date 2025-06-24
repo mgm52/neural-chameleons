@@ -160,7 +160,7 @@ if __name__ == "__main__":
             # })
             conversation_idx += 1
         
-    filename = f"experiments/self_obfuscation_main/results/ultrachat_probe_training_data_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+    filename = f"datasets/self_obfuscation/outputs/ultrachat_probe_training_data_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
     with open(filename, 'w') as f:
         json.dump(data, f, indent=4)
     print(f"Saved ultrachat probe training data to {filename}")
@@ -179,7 +179,7 @@ if __name__ == "__main__":
         conversation_idx += 1
 
     print(f"Done adding to model data! At conversation {conversation_idx}, with len(ultrachat_model_training_data) = {len(ultrachat_model_training_data)}")
-    filename = f"experiments/self_obfuscation_main/results/ultrachat_model_training_data_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+    filename = f"datasets/self_obfuscation/outputs/ultrachat_model_training_data_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
     with open(filename, 'w') as f:
         json.dump(ultrachat_model_training_data, f, indent=4)
     print(f"Saved ultrachat model training data to {filename}")

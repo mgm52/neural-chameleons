@@ -13,6 +13,8 @@ import torch
 from stage1_probe_train import train_and_save_probes
 from stage2_model_train import train_and_test_conditional_model
 from experiments.self_obfuscation_main.utils_testing import test_probe_on_model
+from datasets.self_obfuscation.stage1_data_gen_probe_train import generate_probe_test_and_train_data
+from datasets.self_obfuscation.stage1_data_gen_model_train import generate_model_training_data
 from obf_reps.logging import CSVTXTLogger
 
 
@@ -96,6 +98,8 @@ def main(config_path="config.yaml"):
     do_pre_training_testing = general_settings["do_pre_training_testing"]
     save_model_checkpoint = general_settings["save_model_checkpoint"]
     stages_to_run = general_settings["stages_to_run"]
+    training_words = general_settings["training_words"]
+    test_words = general_settings["test_words"]
     
     # Probe settings
     probe_settings = config["probe_settings"]
@@ -152,7 +156,7 @@ def main(config_path="config.yaml"):
                     latest_test_data = os.path.basename(
                         get_latest_file(
                             f"conditional_test_data_{model_name}*.json",
-                            "experiments/self_obfuscation_main/results"
+                            "datasets/self_obfuscation/outputs"
                         )
                     )
                     if not latest_test_data:
@@ -160,12 +164,47 @@ def main(config_path="config.yaml"):
                             "No test data file found. Please run step 0 first."
                         )
 
+                    # Split word_to_probe into training and test words
+                    word_to_probe_training = {k: v for k, v in word_to_probe.items() if k in training_words}
+                    word_to_probe_test = {k: v for k, v in word_to_probe.items() if k in test_words}
+
                     # -----------------
                     # STEP 1: Train probes
                     # -----------------
                     if 1 in stages_to_run:
                         print("\nTraining probes...")
+
+                        # JSON paths to load training/test data
+                        latest_probe_training_path = get_latest_file(
+                            "probe_training_training_words_sentences_dict*.json",
+                            "datasets/self_obfuscation/outputs"
+                        )
+                        latest_probe_testing_path = get_latest_file(
+                            "probe_training_test_words_sentences_dict*.json",
+                            "datasets/self_obfuscation/outputs"
+                        )
+
+                        if regenerate_training_data or not latest_probe_training_path or not latest_probe_testing_path:
+                            generate_probe_test_and_train_data(
+                                model=model,
+                                train_words=training_words,
+                                test_words=test_words,
+                                num_sentences_per_word=probe_num_sentences_per_word,
+                                twoword_frequency=probe_twoword_frequency,
+                                logger=logger
+                            )
+                            latest_probe_training_path = get_latest_file(
+                                "probe_training_training_words_sentences_dict*.json",
+                                "datasets/self_obfuscation/outputs"
+                            )
+                            latest_probe_testing_path = get_latest_file(
+                                "probe_training_test_words_sentences_dict*.json",
+                                "datasets/self_obfuscation/outputs"
+                            )
+
                         word_to_probe, probe_dir = train_and_save_probes(
+                            train_json_path=latest_probe_training_path,
+                            test_json_path=latest_probe_testing_path,
                             model_name=model_name,
                             target_layers=target_layer,
                             probe_type=probe_type,
@@ -173,12 +212,11 @@ def main(config_path="config.yaml"):
                             batch_size=probe_batch_size,
                             num_epochs=probe_num_epochs,
                             twoword_frequency=probe_twoword_frequency,
-                            regenerate_training_data=regenerate_training_data,
                             num_sentences_per_word=probe_num_sentences_per_word,
                             custom_folder_name=custom_folder_name,
                             benign_proportion_in_nonwords=probe_benign_frequency,
                             logger=logger,
-                            train_test_probes=(
+                            train_test_probes=( # TODO : refactor to just rely on earlier split
                                 "train_only" if not train_test_probes_before_model else "both"
                             )
                         )
@@ -210,19 +248,13 @@ def main(config_path="config.yaml"):
                     # STEP 3: Train the model (finetune) using the probes
                     # -----------------
                     if 3 in stages_to_run:
-                        latest_ultrachat = get_latest_file(
+                        latest_ultrachat_path = get_latest_file(
                             "ultrachat_model_training_data*.json",
-                            "experiments/self_obfuscation_main/results"
+                            "datasets/self_obfuscation/outputs"
                         )
-                        if not latest_ultrachat:
-                            raise FileNotFoundError(
-                                "No ultrachat training data file found. "
-                                "Please ensure previous steps completed successfully."
-                            )
-
                         latest_training_data = get_latest_file(
                             f"model_training_data_{model_name}*.json",
-                            "experiments/self_obfuscation_main/results"
+                            "datasets/self_obfuscation/outputs"
                         )
                         # If existing training data is found and we are not regenerating,
                         # use that; otherwise create a new file name.
@@ -233,13 +265,26 @@ def main(config_path="config.yaml"):
                                 f"model_training_data_{model_name}_"
                                 f"{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
                             )
+                            generate_model_training_data(
+                                model=model,
+                                training_words=training_words,
+                                num_sentences_per_word=model_num_sentences_per_word,
+                                logger=logger,
+                                word_to_probe=word_to_probe_training,
+                                ultrachat_training_path=latest_ultrachat_path,
+                                training_data_json=training_data_json
+                            )
+                            latest_training_data = get_latest_file(
+                                f"model_training_data_{model_name}*.json",
+                                "datasets/self_obfuscation/outputs"
+                            )
 
                         print("\nTraining and testing conditional model...")
                         model, model_details, pregen_data = train_and_test_conditional_model(
                             model_name=model_name,
                             test_data_json=latest_test_data,
                             probe_checkpoints=latest_probe_dir,
-                            ultrachat_training_json=os.path.basename(latest_ultrachat),
+                            ultrachat_training_json=os.path.basename(latest_ultrachat_path),
                             target_layer=int(target_layer),
                             num_epochs=num_epochs,
                             learning_rate=learning_rate,
@@ -249,7 +294,6 @@ def main(config_path="config.yaml"):
                             mismatch_frequency=mismatch_frequency,
                             dontthink_frequency=dontthink_frequency,
                             twoword_frequency=twoword_frequency,
-                            regenerate_training_data=regenerate_training_data,
                             training_data_json=training_data_json,
                             custom_folder_name=custom_folder_name,
                             logger=logger,
@@ -277,7 +321,6 @@ def main(config_path="config.yaml"):
                                 batch_size=probe_batch_size,
                                 num_epochs=probe_num_epochs,
                                 twoword_frequency=probe_twoword_frequency,
-                                regenerate_training_data=regenerate_training_data,
                                 num_sentences_per_word=probe_num_sentences_per_word,
                                 custom_folder_name=f"{custom_folder_name}_finetuned",
                                 train_test_probes="test_only",
@@ -315,7 +358,7 @@ def main(config_path="config.yaml"):
                     # -----------------
                     latest_scores = get_latest_file(
                         "probe_scores_*.csv",
-                        "experiments/self_obfuscation_main/results"
+                        "experiments/self_obfuscation_main/outputs/results"
                     )
                     if not latest_scores:
                         raise FileNotFoundError(

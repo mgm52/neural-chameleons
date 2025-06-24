@@ -13,6 +13,8 @@ general_settings:
   do_pre_training_testing: false
   save_model_checkpoint: true
   stages_to_run: [1, 3, 4]  # Steps of the pipeline to run
+  training_words: ["bomb", "firework", "pizza", "cake",  "flamingo", "monkey", "C++", "javascript"]
+  test_words: ["gun", "apple", "elephant", "SQL", "cloud", "jester", "mathematical", "samantha"]
 
 # Probe settings
 probe_settings:

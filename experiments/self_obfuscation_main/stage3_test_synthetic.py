@@ -64,7 +64,7 @@ if __name__ == "__main__":
     logger = CSVTXTLogger(print_logs_to_console=False)
 
     # Load pre-generated test data
-    test_data_path = f"experiments/self_obfuscation_main/results/{args.test_data}"
+    test_data_path = f"datasets/self_obfuscation/outputs/{args.test_data}"
     with open(test_data_path, "r") as f:
         pregen_data = json.load(f)
 

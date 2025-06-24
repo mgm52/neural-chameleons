@@ -15,7 +15,7 @@ def generate_model_training_data(model, training_words, num_sentences_per_word, 
     )
     
     # Save generated data
-    training_data_path = f"experiments/self_obfuscation_main/results/{training_data_json}"
+    training_data_path = f"datasets/self_obfuscation/outputs/{training_data_json}"
     logger.print(f"Saving training data to {training_data_path}...")
     
     # Convert training data to serializable format
