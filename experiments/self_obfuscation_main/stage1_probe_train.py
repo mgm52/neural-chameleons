@@ -166,12 +166,7 @@ def train_and_save_probes(
     if not (model_in_memory is None):
         model = model_in_memory
     elif model_checkpoint:
-        raise NotImplementedError("Loading from checkpoint is not implemented right now (find the function).")
-        # model = load_model_from_checkpoint(
-        #     model_name=model_name,
-        #     checkpoint_path=f"experiments/self_obfuscation_main/model_checkpoints/{model_checkpoint}"
-        # )
-        # logger.print(f"Loaded fine-tuned model from checkpoint: {model_checkpoint}")
+        model = load_local_model(checkpoint_path=model_checkpoint, model_name=model_name)
     else:
         model = load_local_model(model_name=model_name)
         logger.print(f"Loaded base model: {model_name}")
@@ -304,26 +299,14 @@ if __name__ == "__main__":
     parser.add_argument(
         "--model_name",
         type=str,
-        default="llama_3_8b_instruct",
-        help="Model name to use (default: llama_3_8b_instruct)",
+        default="gemma_2_9b_instruct",
+        help="Model name to use (default: gemma_2_9b_instruct)",
     )
     parser.add_argument(
         "--model_checkpoint",
         type=str,
-        default=None,
+        default="experiments/self_obfuscation_main/outputs/model_checkpoints/20250527_153915_gemma_2_9b_instruct_recreation_good",
         help="Path to a fine-tuned model checkpoint to use instead of the base model",
-    )
-    parser.add_argument(
-        "--target_layers",
-        type=str,
-        default="8",
-        help="Comma-separated list of target layers (default: 8)",
-    )
-    parser.add_argument(
-        "--num_sentences_per_word",
-        type=int,
-        default=200,
-        help="Number of sentences per word (default: 200)",
     )
     parser.add_argument(
         "--probe_type",
@@ -332,38 +315,6 @@ if __name__ == "__main__":
         choices=["logistic", "mlp"],
         help="Type of probe to use (logistic or mlp)",
     )
-    parser.add_argument(
-        "--learning_rate",
-        type=float,
-        default=5e-4,
-        help="Learning rate for the probe (default: 5e-4)",
-    )
-    parser.add_argument(
-        "--batch_size",
-        type=int,
-        default=64,
-        help="Batch size for the probe (default: 64)",
-    )
-    parser.add_argument(
-        "--num_epochs",
-        type=int,
-        default=5,
-        help="Number of epochs for the probe (default: 5)",
-    )
-    parser.add_argument(
-        "--twoword_frequency",
-        type=float,
-        default=0.5,
-        help="Fraction of two-word data to incorporate into the probe training (default: 0.0)",
-    )
-    parser.add_argument(
-        "--train_test_probes",
-        type=str,
-        default="both",
-        choices=["both", "train_only", "test_only"],
-        help="Which probes to train (default: both)",
-    )
-    # custom folder name
     parser.add_argument(
         "--custom_folder_name",
         type=str,
@@ -399,27 +350,44 @@ if __name__ == "__main__":
         "probe_training_training_words_sentences_dict*.json",
         "datasets/self_obfuscation/outputs"
     )
+    if not latest_probe_training_path:
+        raise ValueError("No probe training data found")
     latest_probe_testing_path = get_latest_file(
         "probe_training_test_words_sentences_dict*.json",
         "datasets/self_obfuscation/outputs"
     )
+    if not latest_probe_testing_path:
+        raise ValueError("No probe testing data found")
 
-    # Call the function with parsed arguments
+    probe_settings = config["probe_settings"]
+    probe_benign_frequency = probe_settings["benign_frequency"]
+    probe_learning_rate = probe_settings["learning_rate"]
+    probe_batch_size = probe_settings["batch_size"]
+    probe_num_epochs = probe_settings["num_epochs"]
+    probe_twoword_frequency = probe_settings["twoword_frequency"]
+    probe_num_sentences_per_word = probe_settings["num_sentences_per_word"]
+
+    model_settings = config["model_settings"]
+    target_layer = model_settings["target_layer"]
+
     train_and_save_probes(
         train_json_path=latest_probe_training_path,
         test_json_path=latest_probe_testing_path,
         training_words=training_words,
         test_words=test_words,
-
         model_name=args.model_name,
         model_checkpoint=args.model_checkpoint,
-        target_layers=args.target_layers,
-        num_sentences_per_word=args.num_sentences_per_word,
+        target_layers=target_layer,
         probe_type=args.probe_type,
-        learning_rate=args.learning_rate,
-        batch_size=args.batch_size,
-        num_epochs=args.num_epochs,
-        twoword_frequency=args.twoword_frequency,
-        train_test_probes=args.train_test_probes,
-        custom_folder_name=args.custom_folder_name
+        learning_rate=float(probe_learning_rate),
+        batch_size=int(probe_batch_size),
+        num_epochs=int(probe_num_epochs),
+        twoword_frequency=float(probe_twoword_frequency),
+        num_sentences_per_word=int(probe_num_sentences_per_word),
+        custom_folder_name=args.custom_folder_name,
+        benign_proportion_in_nonwords=float(probe_benign_frequency),
+        train_test_probes=(
+            "both"
+        )
     )
+

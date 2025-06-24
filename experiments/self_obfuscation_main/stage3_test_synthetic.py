@@ -49,13 +49,13 @@ def run_test_suite(model, word_to_probe_dict, words, logger, model_details, preg
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Test a model checkpoint on probe tasks')
-    parser.add_argument('--model_checkpoint', type=str, default="checkpoint_2025-02-14_15-44-37_layer_13_bestlog", help='Path to model checkpoint (or none)')
-    parser.add_argument('--probe_checkpoints', type=str, default="20250216_201327_logistic_14", help='Path to probe checkpoints (or none)')
-    parser.add_argument('--test_data', type=str, default="conditional_test_data_20250215_020958.json", help='Path to test data JSON')
-    parser.add_argument('--model_name', type=str, default="llama_3_8b_instruct",
-                       help='Model name to use (default: llama_3_8b_instruct)')
-    parser.add_argument('--target_layers', type=str, default="14",
-                       help='Comma-separated list of target layers (default: 8)')
+    parser.add_argument('--model_checkpoint', type=str, default="experiments/self_obfuscation_main/outputs/model_checkpoints/20250527_153915_gemma_2_9b_instruct_recreation_good", help='Path to model checkpoint (or none)')
+    parser.add_argument('--probe_checkpoints', type=str, default="experiments/self_obfuscation_main/outputs/probe_checkpoints/20250307_110907_gemma_2_9b_instruct_plr_4e-05_l12_logistic_ptwf_0.5_ps_400_ms_200_mlr_2e-06_bl_0.1_withbasetest_pretrainprobes", help='Path to probe checkpoints (or none)')
+    parser.add_argument('--test_data', type=str, default="datasets/self_obfuscation/outputs/conditional_test_data_20250215_020958.json", help='Path to test data JSON')
+    parser.add_argument('--model_name', type=str, default="gemma_2_9b_instruct",
+                       help='Model name to use (default: gemma_2_9b_instruct)')
+    parser.add_argument('--target_layers', type=str, default="12",
+                       help='Comma-separated list of target layers (default: 12)')
     parser.add_argument('--probe_type', type=str, default="logistic",
                        choices=["logistic", "mlp"],
                        help='Type of probe to use (logistic or mlp)')
@@ -64,21 +64,27 @@ if __name__ == "__main__":
     logger = CSVTXTLogger(print_logs_to_console=False)
 
     # Load pre-generated test data
-    test_data_path = f"datasets/self_obfuscation/outputs/{args.test_data}"
+    print(f"Loading test data from {args.test_data}")
+    test_data_path = args.test_data
     with open(test_data_path, "r") as f:
         pregen_data = json.load(f)
 
     # Check pre-generated data content
+    print(f"Checking pre-generated data content")
     check_pregen_data_content(pregen_data, logger)
 
     # Load probes and metadata
-    probe_checkpoints_path = f"experiments/self_obfuscation_main/probe_checkpoints/{args.probe_checkpoints}"
+    print(f"Loading probes from {args.probe_checkpoints}")
+    probe_checkpoints_path = args.probe_checkpoints
     word_to_probe_dict = load_word_to_probe_dict(probe_checkpoints_path)
-    
-    # Load metadata 
+    print(f"Loaded {len(word_to_probe_dict)} probes")
+
+    # Load metadata
+    print(f"Loading metadata from {probe_checkpoints_path}")
     metadata_path = os.path.join(probe_checkpoints_path, "metadata.json")
     with open(metadata_path, "r") as f:
         metadata = json.load(f)
+    print(f"Loaded metadata")
     target_layers = [int(layer) for layer in args.target_layers.split(',')]
     words = metadata["test_words"]
     num_sentences_per_word = metadata["num_sentences_per_word"]
@@ -91,7 +97,7 @@ if __name__ == "__main__":
     logger.print(f"Loaded {len(word_to_probe_dict)} probes, each trained on {num_sentences_per_word} sentences, generated using '{data_generation_method}'")
 
     # Load model from checkpoint, if exists
-    checkpoint_path = f"experiments/self_obfuscation_main/model_checkpoints/{args.model_checkpoint}"
+    checkpoint_path = args.model_checkpoint
     print(f"Loading model from {checkpoint_path}")
     if os.path.isdir(checkpoint_path):
         model = load_local_model(checkpoint_path=checkpoint_path)

@@ -10,6 +10,7 @@ from datetime import datetime
 import torch
 
 # Import the functions from the modules
+from experiments.self_obfuscation_main.utils_misc import load_local_model
 from stage1_probe_train import train_and_save_probes
 from stage2_model_train import train_and_test_conditional_model
 from experiments.self_obfuscation_main.utils_testing import test_probe_on_model
@@ -267,6 +268,7 @@ def main(config_path="config.yaml"):
                                 f"model_training_data_{model_name}_"
                                 f"{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
                             )
+                            model = load_local_model(model_name=model_name)
                             generate_model_training_data(
                                 model=model,
                                 training_words=training_words,
