@@ -13,12 +13,15 @@ OUTPUTS:
 - Training metadata (JSON file)
 """
 
+import glob
 import os
 import json
 import pickle
 import random
 from datetime import datetime
 import argparse
+
+import yaml
 from datasets import load_dataset
 
 from obf_reps.logging import CSVTXTLogger
@@ -133,6 +136,8 @@ def load_data(
 def train_and_save_probes(
     train_json_path,
     test_json_path,
+    training_words,
+    test_words,
     model_name="llama_3_8b_instruct",
     model_checkpoint=None,
     model_in_memory=None,
@@ -146,7 +151,7 @@ def train_and_save_probes(
     train_test_probes="both",
     custom_folder_name="",
     benign_proportion_in_nonwords=0.5,
-    logger=None
+    logger=None,
 ):
     """
     Train and save probes for conditional experiments.
@@ -367,8 +372,45 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
     
+    def load_config(config_path="config.yaml"):
+        with open(config_path, 'r') as file:
+            config = yaml.safe_load(file)
+        return config
+
+    def get_latest_file(pattern, directory=None):
+        """
+        Return the path to the most recently created file that matches the given
+        pattern. If directory is provided, the pattern is joined with the directory.
+        """
+        if directory:
+            pattern = os.path.join(directory, pattern)
+        files = glob.glob(pattern)
+        if not files:
+            return None
+        return max(files, key=os.path.getctime)
+
+    config = load_config("configs/self_obfuscation/config.yaml")
+    general_settings = config["general_settings"]
+
+    training_words = general_settings["training_words"]
+    test_words = general_settings["test_words"]
+
+    latest_probe_training_path = get_latest_file(
+        "probe_training_training_words_sentences_dict*.json",
+        "datasets/self_obfuscation/outputs"
+    )
+    latest_probe_testing_path = get_latest_file(
+        "probe_training_test_words_sentences_dict*.json",
+        "datasets/self_obfuscation/outputs"
+    )
+
     # Call the function with parsed arguments
     train_and_save_probes(
+        train_json_path=latest_probe_training_path,
+        test_json_path=latest_probe_testing_path,
+        training_words=training_words,
+        test_words=test_words,
+
         model_name=args.model_name,
         model_checkpoint=args.model_checkpoint,
         target_layers=args.target_layers,

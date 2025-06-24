@@ -205,6 +205,8 @@ def main(config_path="config.yaml"):
                         word_to_probe, probe_dir = train_and_save_probes(
                             train_json_path=latest_probe_training_path,
                             test_json_path=latest_probe_testing_path,
+                            training_words=training_words,
+                            test_words=test_words,
                             model_name=model_name,
                             target_layers=target_layer,
                             probe_type=probe_type,
@@ -312,6 +314,10 @@ def main(config_path="config.yaml"):
                         if not train_test_probes_before_model:
                             print("\nTraining test probes on fine-tuned model...")
                             test_word_to_probe, test_probe_dir = train_and_save_probes(
+                                train_json_path=latest_probe_training_path,
+                                test_json_path=latest_probe_testing_path,
+                                training_words=training_words,
+                                test_words=test_words,
                                 model_name=model_name,
                                 model_in_memory=model,
                                 model_checkpoint=None,
