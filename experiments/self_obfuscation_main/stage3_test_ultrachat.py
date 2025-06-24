@@ -108,9 +108,9 @@ if __name__ == "__main__":
     logger.print(f"Target layers: {target_layers}")
 
     # Load model
-    checkpoint_path = f"experiments/self_obfuscation_main/model_checkpoints/{args.model_checkpoint}"
+    checkpoint_path = f"experiments/self_obfuscation_main/outputs/model_checkpoints/{args.model_checkpoint}"
     if os.path.isdir(checkpoint_path):
-        model = load_local_model(checkpoint_path=checkpoint_path)
+        model = load_local_model(checkpoint_path=checkpoint_path, model_name=args.model_name)
         logger.print(f"Loaded model from {checkpoint_path}")
     else:
         logger.print(f"Checkpoint path not found - loading {args.model_name}")
