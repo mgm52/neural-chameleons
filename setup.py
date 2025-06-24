@@ -15,7 +15,7 @@ setup(
         "accelerate",
         "scikit-learn",
         "hydra-core",
-        "sae-lens",
+        "sae-lens==5.10.7",
         # Visualization
         "matplotlib",
         "pandas",
@@ -32,7 +32,8 @@ setup(
         "seaborn",
         # Git dependencies
         "repe @ git+https://github.com/andyzoujm/representation-engineering.git@main",
-        "sparsify @ git+https://github.com/EleutherAI/sparsify@main",
+        "eai-sparsify",
         "strong_reject @ git+https://github.com/dsbowen/strong_reject.git@main",
+        "bitsandbytes",
     ],
 )

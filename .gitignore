@@ -5,6 +5,7 @@ scripts/
 results/
 slurm/
 build/
+models/
 
 # Venv
 .venv/
