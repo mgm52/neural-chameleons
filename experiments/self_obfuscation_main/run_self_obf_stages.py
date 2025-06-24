@@ -66,7 +66,7 @@ def run_script(script_path, **kwargs):
         raise RuntimeError(error_msg)
 
 
-def load_config(config_path="config.yaml"):
+def load_config(config_path="configs/self_obfuscation/config.yaml"):
     """
     Load configuration from a YAML file.
     
@@ -81,7 +81,7 @@ def load_config(config_path="config.yaml"):
     return config
 
 
-def main(config_path="config.yaml"):
+def main(config_path="configs/self_obfuscation/config.yaml"):
     # Load configuration from YAML file
     config = load_config(config_path)
     
@@ -144,12 +144,17 @@ def main(config_path="config.yaml"):
                     if train_test_probes_before_model:
                         custom_folder_name += "_pretrainprobes"
 
+                    # Load model early if needed for any stage
+                    model = None
+                    if 1 in stages_to_run or 3 in stages_to_run:
+                        model = load_local_model(model_name=model_name)
+
                     # -----------------
                     # STEP 0: (Optional) Generate test data
                     # -----------------
                     if 0 in stages_to_run:
                         run_script(
-                            "datasets/self_obfuscation/stage0_data_gen_synthetic.py",
+                            "datasets/self_obfuscation/stage0_data_gen_synthetic_test.py",
                             model_name=model_name
                         )
 
@@ -165,9 +170,10 @@ def main(config_path="config.yaml"):
                             "No test data file found. Please run step 0 first."
                         )
 
-                    # Split word_to_probe into training and test words
-                    word_to_probe_training = {k: v for k, v in word_to_probe.items() if k in training_words}
-                    word_to_probe_test = {k: v for k, v in word_to_probe.items() if k in test_words}
+                    # Initialize word_to_probe variables
+                    word_to_probe = None
+                    word_to_probe_training = None
+                    word_to_probe_test = None
 
                     # -----------------
                     # STEP 1: Train probes
@@ -177,11 +183,11 @@ def main(config_path="config.yaml"):
 
                         # JSON paths to load training/test data
                         latest_probe_training_path = get_latest_file(
-                            "probe_training_training_words_sentences_dict*.json",
+                            "probe_training_training_words_sentences_dict*instruct.json",
                             "datasets/self_obfuscation/outputs"
                         )
                         latest_probe_testing_path = get_latest_file(
-                            "probe_training_test_words_sentences_dict*.json",
+                            "probe_training_test_words_sentences_dict*instruct.json",
                             "datasets/self_obfuscation/outputs"
                         )
 
@@ -224,6 +230,11 @@ def main(config_path="config.yaml"):
                             )
                         )
                         latest_probe_dir = custom_folder_name
+                        
+                        # Now split word_to_probe into training and test words
+                        if word_to_probe:
+                            word_to_probe_training = {k: v for k, v in word_to_probe.items() if k in training_words}
+                            word_to_probe_test = {k: v for k, v in word_to_probe.items() if k in test_words}
                     else:
                         latest_probe_dir = os.path.basename(
                             get_latest_file("*", "experiments/self_obfuscation_main/outputs/probe_checkpoints")
@@ -233,7 +244,6 @@ def main(config_path="config.yaml"):
                                 "No probe checkpoint directory found. "
                                 "Please ensure step 1 completed successfully."
                             )
-                        word_to_probe = None
 
                     # -----------------
                     # STEP 2: (Optional) Evaluate model with probes on raw chat data
@@ -268,7 +278,6 @@ def main(config_path="config.yaml"):
                                 f"model_training_data_{model_name}_"
                                 f"{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
                             )
-                            model = load_local_model(model_name=model_name)
                             generate_model_training_data(
                                 model=model,
                                 training_words=training_words,

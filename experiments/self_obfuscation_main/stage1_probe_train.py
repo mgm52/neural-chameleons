@@ -321,6 +321,13 @@ if __name__ == "__main__":
         default="",
         help="Custom folder name for the probe checkpoints (default: '')",
     )
+    parser.add_argument(
+        "--train_test_probes",
+        type=str,
+        default="both",
+        choices=["both", "train_only", "test_only"],
+        help="Which probes to train (default: both)",
+    )
     args = parser.parse_args()
     
     def load_config(config_path="config.yaml"):
@@ -347,13 +354,15 @@ if __name__ == "__main__":
     test_words = general_settings["test_words"]
 
     latest_probe_training_path = get_latest_file(
-        "probe_training_training_words_sentences_dict*.json",
+        # Hack: look for *instruct.json to differentiate from twoword.json...
+        "probe_training_training_words_sentences_dict*instruct.json",
         "datasets/self_obfuscation/outputs"
     )
     if not latest_probe_training_path:
         raise ValueError("No probe training data found")
     latest_probe_testing_path = get_latest_file(
-        "probe_training_test_words_sentences_dict*.json",
+        # Hack: look for *instruct.json to differentiate from twoword.json...
+        "probe_training_test_words_sentences_dict*instruct.json",
         "datasets/self_obfuscation/outputs"
     )
     if not latest_probe_testing_path:
@@ -386,8 +395,6 @@ if __name__ == "__main__":
         num_sentences_per_word=int(probe_num_sentences_per_word),
         custom_folder_name=args.custom_folder_name,
         benign_proportion_in_nonwords=float(probe_benign_frequency),
-        train_test_probes=(
-            "both"
-        )
+        train_test_probes=args.train_test_probes
     )
 
