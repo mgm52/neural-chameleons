@@ -192,9 +192,9 @@ def train_and_save_probes(
     date_time = datetime.now().strftime("%Y%m%d_%H%M%S")
     if not custom_folder_name:
         model_suffix = "_finetuned" if model_checkpoint else ""
-        directory = f"experiments/self_obfuscation_main/probe_checkpoints/{date_time}_{probe_type}_{target_layers[0]}{model_suffix}"
+        directory = f"experiments/self_obfuscation_main/outputs/probe_checkpoints/{date_time}_{probe_type}_{target_layers[0]}{model_suffix}"
     else:
-        directory = f"experiments/self_obfuscation_main/probe_checkpoints/{custom_folder_name}"
+        directory = f"experiments/self_obfuscation_main/outputs/probe_checkpoints/{custom_folder_name}"
     os.makedirs(directory, exist_ok=True)
 
     # Save metadata

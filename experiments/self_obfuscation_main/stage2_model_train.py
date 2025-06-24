@@ -63,7 +63,7 @@ def train_and_test_conditional_model(
 
     # Construct full paths
     test_data_path = f"datasets/self_obfuscation/outputs/{test_data_json}"
-    probe_checkpoints_path = f"experiments/self_obfuscation_main/probe_checkpoints/{probe_checkpoints}"
+    probe_checkpoints_path = f"experiments/self_obfuscation_main/outputs/probe_checkpoints/{probe_checkpoints}"
     ultrachat_training_path = f"datasets/self_obfuscation/outputs/{ultrachat_training_json}"
 
     # LOADING

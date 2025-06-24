@@ -41,7 +41,7 @@ def main():
         "--probe_checkpoint_dir",
         type=str,
         default="experiments/self_obfuscation_harmful/outputs/probe_checkpoints/20250617_023933_harmful_jailbreak",
-        #default="experiments/self_obfuscation_main/probe_checkpoints/20250329_235323_harmful_jailbreak",
+        #default="experiments/self_obfuscation_main/outputs/probe_checkpoints/20250329_235323_harmful_jailbreak",
         help="Directory where the trained probe and metadata are stored"
     )
     parser.add_argument(

@@ -226,7 +226,7 @@ def main(config_path="config.yaml"):
                         latest_probe_dir = custom_folder_name
                     else:
                         latest_probe_dir = os.path.basename(
-                            get_latest_file("*", "experiments/self_obfuscation_main/probe_checkpoints")
+                            get_latest_file("*", "experiments/self_obfuscation_main/outputs/probe_checkpoints")
                         )
                         if not latest_probe_dir:
                             raise FileNotFoundError(

@@ -93,7 +93,7 @@ if __name__ == "__main__":
     dataset = load_ultrachat_sample(args.num_conversations, split="test_gen")
 
     # Load probes and metadata
-    probe_checkpoints_path = f"experiments/self_obfuscation_main/probe_checkpoints/{args.probe_checkpoints}"
+    probe_checkpoints_path = f"experiments/self_obfuscation_main/outputs/probe_checkpoints/{args.probe_checkpoints}"
     word_to_probe = load_word_to_probe_dict(probe_checkpoints_path)
 
     # Load metadata
