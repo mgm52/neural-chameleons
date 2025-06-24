@@ -205,7 +205,7 @@ if __name__ == "__main__":
 
     if args.model_checkpoint and os.path.isdir(args.model_checkpoint):
         logger.print(f"Loading model from checkpoint directory: {args.model_checkpoint}")
-        model = load_local_model(checkpoint_path=args.model_checkpoint)
+        model = load_local_model(checkpoint_path=args.model_checkpoint, model_name=args.model_name)
     else:
         logger.print(f"No valid checkpoint directory provided. Loading model by name {args.model_name}")
         model = load_local_model(model_name=args.model_name)

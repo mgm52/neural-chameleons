@@ -50,7 +50,7 @@ def run_test_suite(model, word_to_probe_dict, words, logger, model_details, preg
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Test a model checkpoint on probe tasks')
     parser.add_argument('--model_checkpoint', type=str, default="experiments/self_obfuscation_main/outputs/model_checkpoints/20250527_153915_gemma_2_9b_instruct_recreation_good", help='Path to model checkpoint (or none)')
-    parser.add_argument('--probe_checkpoints', type=str, default="experiments/self_obfuscation_main/outputs/probe_checkpoints/20250307_110907_gemma_2_9b_instruct_plr_4e-05_l12_logistic_ptwf_0.5_ps_400_ms_200_mlr_2e-06_bl_0.1_withbasetest_pretrainprobes", help='Path to probe checkpoints (or none)')
+    parser.add_argument('--probe_checkpoints', type=str, default="experiments/self_obfuscation_main/outputs/probe_checkpoints/20250624_165001_logistic_12_finetuned", help='Path to probe checkpoints (or none)')
     parser.add_argument('--test_data', type=str, default="datasets/self_obfuscation/outputs/conditional_test_data_20250215_020958.json", help='Path to test data JSON')
     parser.add_argument('--model_name', type=str, default="gemma_2_9b_instruct",
                        help='Model name to use (default: gemma_2_9b_instruct)')
@@ -97,13 +97,12 @@ if __name__ == "__main__":
     logger.print(f"Loaded {len(word_to_probe_dict)} probes, each trained on {num_sentences_per_word} sentences, generated using '{data_generation_method}'")
 
     # Load model from checkpoint, if exists
-    checkpoint_path = args.model_checkpoint
-    print(f"Loading model from {checkpoint_path}")
-    if os.path.isdir(checkpoint_path):
-        model = load_local_model(checkpoint_path=checkpoint_path)
-        logger.print(f"Loaded model from {checkpoint_path}")
+    print(f"Loading model from {args.model_checkpoint}")
+    if os.path.isdir(args.model_checkpoint):
+        model = load_local_model(checkpoint_path=args.model_checkpoint, model_name=args.model_name)
+        logger.print(f"Loaded model from {args.model_checkpoint}")
         # Load model training metadata if it exists
-        metadata_path = os.path.join(checkpoint_path, "model_training_metadata.json")
+        metadata_path = os.path.join(args.model_checkpoint, "model_training_metadata.json")
         if os.path.exists(metadata_path):
             with open(metadata_path, "r") as f:
                 model_details = json.load(f)

@@ -145,6 +145,7 @@ def load_local_model(checkpoint_path: Optional[str] = None, model_name: str = "l
     
     if checkpoint_path is not None:
         # Load model weights from checkpoint
+        print(f"Loading model checkpoint from {checkpoint_path}")
         model = AutoModelForCausalLM.from_pretrained(
             checkpoint_path,
             device_map=model_config.device,
@@ -177,6 +178,7 @@ def load_local_model(checkpoint_path: Optional[str] = None, model_name: str = "l
         )
     else:
         # Load everything from base model
+        print(f"Just loading base model from {base_model_path}")
         model = HFHardPromptedWithSelectableLayers.load_model(base_model_path, model_config)
     
     return model
