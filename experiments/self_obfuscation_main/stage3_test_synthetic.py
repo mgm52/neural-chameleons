@@ -54,8 +54,6 @@ if __name__ == "__main__":
     parser.add_argument('--test_data', type=str, default="datasets/self_obfuscation/outputs/conditional_test_data_20250215_020958.json", help='Path to test data JSON')
     parser.add_argument('--model_name', type=str, default="gemma_2_9b_instruct",
                        help='Model name to use (default: gemma_2_9b_instruct)')
-    parser.add_argument('--target_layers', type=str, default="12",
-                       help='Comma-separated list of target layers (default: 12)')
     parser.add_argument('--probe_type', type=str, default="logistic",
                        choices=["logistic", "mlp"],
                        help='Type of probe to use (logistic or mlp)')
@@ -85,7 +83,7 @@ if __name__ == "__main__":
     with open(metadata_path, "r") as f:
         metadata = json.load(f)
     print(f"Loaded metadata")
-    target_layers = [int(layer) for layer in args.target_layers.split(',')]
+    target_layers = metadata["target_layers"]
     words = metadata["test_words"]
     num_sentences_per_word = metadata["num_sentences_per_word"]
     data_generation_method = metadata["data_generation_method"]
