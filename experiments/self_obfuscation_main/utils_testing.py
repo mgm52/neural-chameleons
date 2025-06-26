@@ -1,6 +1,6 @@
 import random
 from collections import defaultdict
-from typing import List, Optional, Tuple
+from typing import List, Literal, Optional, Tuple
 
 import torch
 
@@ -61,6 +61,7 @@ def test_trainable_metric_on_response_data_module(
     model_details: Optional[dict] = None,
     layers_to_probe: Optional[List[int]] = None,
     custom_folder_name: str = "trainable_metric_test",
+    pooling_type: Literal["mean", "max", "attn", "ema"] = "mean",
     adv_word: str = None,
 ) -> dict:
     """
@@ -80,7 +81,6 @@ def test_trainable_metric_on_response_data_module(
     Returns:
         None; writes logs via `logger.log_to_table(...)`.
     """
-    logger.print("Evaluating the trainable metric on the ResponseProbeDataModule test set...")
 
     # Make sure the DataModule is set up for 'test' stage
     # data_module.setup(stage='test')
@@ -125,11 +125,13 @@ def test_trainable_metric_on_response_data_module(
             input_reps=pos_forward.input_reps,
             target_reps=pos_forward.target_reps,
             target_mask=pos_forward.loss_mask,
+            layer_reduction=pooling_type,
         )
         neg_score = metric.predict_example(
             input_reps=neg_forward.input_reps,
             target_reps=neg_forward.target_reps,
             target_mask=neg_forward.loss_mask,
+            layer_reduction=pooling_type,
         )
 
         # 4. Print (and log) results

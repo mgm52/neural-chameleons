@@ -20,18 +20,14 @@ from jaxtyping import Bool, Float
 # from sae import Sae  # For Eleuther SAEs for Llama-3-8b
 from sae_lens import SAE  # For SAEs for Gemma-2-2b
 from sklearn.decomposition import PCA
+from sklearn.linear_model import LogisticRegression as SklearnLogisticRegression
+from sklearn.preprocessing import StandardScaler
 from torch import Tensor
 
 from obf_reps.data import ConceptDataModule, ConceptDataset, ObfusDataset
 from obf_reps.data.data_utils import join_concept_obfus_datasets
 from obf_reps.logging import Logger
-from obf_reps.metrics.probes import (
-    MLP,
-    VAE,
-    AttentionMLP,
-    LogisticRegression,
-    SAEClassifier,
-)
+from obf_reps.metrics.probes import MLP, VAE, LogisticRegression, SAEClassifier
 from obf_reps.models import ForwardReturn, ModelBase
 
 DEBUG = False
@@ -89,6 +85,7 @@ class MetricConfig:
 
     n_components: Optional[int] = 1  # Number of components for PCA
     feature_list_filepath: Optional[str] = None  # Path to feature list for Gemma-2-2b
+    C: float = 1.0  # Regularization strength for sklearn LogisticRegression
 
 
 def transfer_to_cpu(tensor_pair):
@@ -303,6 +300,7 @@ class ObfMetric(ABC):
         input_reps: Float[Tensor, "b layers inp_seq_len hidden_dim"],
         target_reps: Float[Tensor, "b layers out_seq_len hidden_dim"],
         target_mask: Bool[Tensor, "b out_seq_len"],
+        layer_reduction: str = "mean",
     ):
         """Get predictions from input_reps and target_reps.
 
@@ -323,7 +321,9 @@ class ObfMetric(ABC):
             target_mask=target_mask,
         )
 
-        return self.predict(reps=reps, attention_mask=attention_mask)
+        return self.predict(
+            reps=reps, attention_mask=attention_mask, layer_reduction=layer_reduction
+        )
 
     @torch.no_grad()
     def get_reps_from_dataset(
@@ -814,7 +814,6 @@ class TrainableMetric(ObfMetric):
         reps_dataset: RepsDatasetT,
         **kwargs,
     ):
-        print("STARTING FIT")
         device = self.device
 
         # Concatenate all reps and labels, treating each token as an independent example
@@ -1024,6 +1023,166 @@ class LogisticRegressionMetric(TrainableMetric):
 class MLPMetric(TrainableMetric):
     def create_model(self, hidden_size) -> torch.nn.Module:
         return MLP(hidden_size)
+
+
+class SklearnLogisticRegressionMetric(ObfMetric):
+    def __init__(
+        self,
+        model: ModelBase,
+        data_module: ConceptDataModule,
+        config: MetricConfig,
+        logger: Logger,
+        probe_path: Optional[str] = None,
+        pca_path: Optional[str] = None,
+    ):
+        self.probe: Dict[int, SklearnLogisticRegression] = {}
+        self.scaler: Dict[int, StandardScaler] = {}
+        super().__init__(model, data_module, config, logger, probe_path, pca_path)
+
+    def fit(
+        self,
+        reps_dataset: RepsDatasetT,
+        **kwargs,
+    ):
+        # Concatenate all reps and labels, treating each token as an independent example
+        all_reps = []
+        all_labels = []
+
+        for rep, label in reps_dataset:
+            # rep shape: [1, layers, seq_len, hidden_dim]
+            # Reshape to [layers, seq_len, hidden_dim]
+            rep = rep.squeeze(0)
+            # Extend labels to match seq_len
+            extended_label = label.repeat(rep.shape[1])
+            all_reps.append(rep)
+            all_labels.append(extended_label)
+
+        # Concatenate along the sequence length dimension
+        reps = torch.cat(all_reps, dim=1)
+        labels = torch.cat(all_labels, dim=0)
+
+        n_layers, total_seq_len, hidden_size = reps.shape
+
+        for layer_index, layer in enumerate(self.config.layers):
+            X_train = reps[layer_index].cpu().numpy()  # Shape: [total_seq_len, hidden_size]
+            y_train = labels.cpu().numpy()
+
+            print(f"Fitting sklearn layer {layer} probe ({layer_index + 1} / {n_layers})")
+
+            # Initialize and fit StandardScaler
+            scaler = StandardScaler()
+            X_train_scaled = scaler.fit_transform(X_train)
+
+            # Initialize and fit LogisticRegression
+            clf = SklearnLogisticRegression(
+                C=self.config.C,
+                random_state=42,
+                n_jobs=-1,
+                fit_intercept=False,
+            )
+            clf.fit(X_train_scaled, y_train)
+
+            # Store the trained models
+            self.probe[layer_index] = clf
+            self.scaler[layer_index] = scaler
+
+    def evaluate(
+        self, reps: Float[Tensor, "n layers seq_len hidden_dim"], **kwargs
+    ) -> Float[Tensor, "n layers seq_len"]:
+        if reps.ndim == 3:
+            # We got reps with no seq_len from "get_reps_from_dataset"
+            # Add in sequence dimension to broadcast over
+            reps = reps.unsqueeze(2)
+
+        b, n_layers, seq_len, hidden_dim = reps.shape
+        device = self.device
+        probs = torch.zeros((b, n_layers, seq_len), device=device)
+
+        for layer_index, layer in enumerate(self.config.layers):
+            X = reps[:, layer_index, :, :].cpu().numpy()  # Shape: [b, seq_len, hidden_dim]
+
+            # Reshape for sklearn: [b*seq_len, hidden_dim]
+            X_flat = X.reshape(-1, hidden_dim)
+
+            # Scale the features
+            X_scaled = self.scaler[layer_index].transform(X_flat)
+
+            # Get probabilities from sklearn
+            probs_np = self.probe[layer_index].predict_proba(X_scaled)[
+                :, 1
+            ]  # Get positive class probabilities
+
+            # Reshape back to [b, seq_len] and convert to tensor
+            probs_reshaped = probs_np.reshape(b, seq_len)
+            probs[:, layer_index, :] = torch.from_numpy(probs_reshaped).to(device)
+
+        return probs.to(torch.float16)
+
+    def predict(
+        self,
+        reps: Float[Tensor, "b layers seq_len hidden_dim"],
+        attention_mask: Optional[Bool[Tensor, "b seq_len"]] = None,
+        layer_reduction: str = "mean",
+        **kwargs,
+    ) -> Float[Tensor, "b"]:
+        b, layers, seq_len, hidden_dim = reps.shape
+        if b > 1:
+            assert attention_mask is not None, "Attention mask must be provided for batch size > 1"
+
+        scores: Float[Tensor, "b layers seq_len"] = self.evaluate(reps)
+
+        # Apply attention mask if provided
+        if attention_mask is not None:
+            # Expand attention_mask to match scores dimensions
+            attention_mask_expanded: Float[Tensor, "b layers seq_len"] = attention_mask.unsqueeze(
+                1
+            ).expand_as(scores)
+            assert attention_mask_expanded.shape == scores.shape, "Bug in attention mask handling"
+            scores = scores.masked_fill(~attention_mask_expanded, 0.0)
+
+            # Sum scores and divide by the number of non-masked tokens
+            seq_scores = scores.sum(dim=2) / attention_mask_expanded.sum(dim=2).clamp(min=1)
+        else:
+            seq_scores = scores.mean(dim=2)
+
+        # Reduce over layers
+        match layer_reduction:
+            case "mean":
+                final_scores = seq_scores.mean(dim=1)
+            case "sum":
+                final_scores = seq_scores.sum(dim=1)
+            case "max":
+                final_scores = seq_scores.max(dim=1).values
+            case _:
+                raise ValueError(f"Invalid layer_reduction: {layer_reduction}")
+
+        assert final_scores.shape == (b,), f"Expected shape (b,), but got {final_scores.shape}"
+
+        return final_scores
+
+    def load_pretrained(
+        self,
+        path: Optional[str] = None,
+        probe_state: Optional[Any] = None,
+    ):
+        assert (
+            path is not None or probe_state is not None
+        ), "Must provide either path or probe_state"
+        if path is not None:
+            data = joblib.load(path)
+            self.probe = data["probe"]
+            self.scaler = data["scaler"]
+        else:
+            self.probe = probe_state["probe"]
+            self.scaler = probe_state["scaler"]
+
+    def save_probe(self, path: Optional[str] = None) -> None | Any:
+        data = {"probe": self.probe, "scaler": self.scaler}
+        if path is not None:
+            joblib.dump(data, path)
+            return None
+        else:
+            return data
 
 
 # class SAEClassifierMetric(ObfMetric):

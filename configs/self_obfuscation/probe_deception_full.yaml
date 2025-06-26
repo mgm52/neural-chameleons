@@ -1,0 +1,40 @@
+model_name_or_path: "gemma_2_9b_instruct"
+
+# Probe configurations
+probes:
+  sklearn_logistic_baseline:
+    type: "sklearn_logistic"
+    C: 0.01
+    target_layers: [12]
+    batch_size: 64
+    num_epochs: 1
+    pooling_type: "mean"
+  # logistic_baseline:
+  #   type: "logistic"
+  #   learning_rate: 4e-5
+  #   batch_size: 64
+  #   num_epochs: 1
+  #   target_layers: [12]
+  # mlp_baseline:
+  #   type: "mlp"
+  #   learning_rate: 4e-5
+  #   batch_size: 64
+  #   num_epochs: 1
+  #   target_layers: [12]
+
+# Each split will be evaluated separately
+training_datasets:
+  train:
+    harmful: ["dolus_deceptive_train"]
+    benign: ["dolus_benign_train"]
+
+test_datasets:
+  test:
+    harmful: ["dolus_deceptive_test"]
+    benign: ["dolus_benign_test"]
+  # + APOLLO STUFF in ood
+
+wandb_project: "probe-training"
+wandb_entity: 4002tsa
+wandb_name: null
+wandb_tags: []

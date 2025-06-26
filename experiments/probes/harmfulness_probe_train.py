@@ -16,7 +16,7 @@ import os
 import pickle
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Union
+from typing import Dict, List, Literal, Optional, Union
 
 import yaml
 from pydantic import BaseModel, model_validator
@@ -29,7 +29,13 @@ from experiments.self_obfuscation_main.utils_testing import (
     test_trainable_metric_on_response_data_module,
 )
 from experiments.self_obfuscation_main.utils_training import ResponseProbeDataModule
-from obf_reps.metrics import LogisticRegressionMetric, MetricConfig
+from obf_reps.logging import Logger
+from obf_reps.metrics import (
+    LogisticRegressionMetric,
+    MetricConfig,
+    MLPMetric,
+    SklearnLogisticRegressionMetric,
+)
 
 harmful_dataset_names = [
     "circuit_breakers_train",
@@ -51,45 +57,65 @@ benign_dataset_names = [
 ]
 
 
+class ProbeConfig(BaseModel):
+    type: Literal["logistic", "mlp", "sklearn_logistic"]
+    pooling_type: Literal["mean", "max", "attn", "ema"]
+    batch_size: int
+    num_epochs: int
+    target_layers: list[int]
+    learning_rate: float | None = None
+    C: float | None = None
+
+    @model_validator(mode="after")
+    def validate_config(self):
+        if self.type == "sklearn_logistic":
+            assert self.C is not None, "C must be provided for sklearn_logistic probe"
+        if self.type in ["logistic", "mlp"]:
+            assert (
+                self.learning_rate is not None
+            ), "learning_rate must be provided for logistic and mlp probes"
+        return self
+
+
 class ProbeTrainingConfig(BaseModel):
     model_name_or_path: str | Path
-    learning_rate: float = 4e-5
-    batch_size: int = 64
-    num_epochs: int = 1
-    target_layers: list[int] = [12]
-    probe_types: str | list[str] = "logistic"
+    probes: dict[str, ProbeConfig]  # Dictionary of probe configs
     training_datasets: dict[str, dict[str, list[str]]]
     test_datasets: dict[str, dict[str, list[str]]] | None = None
-    # WandB settings
     wandb_project: str = "probe-training"
     wandb_entity: Optional[str] = None
     wandb_name: Optional[str] = None
     wandb_tags: Optional[list[str]] = None
 
     @model_validator(mode="after")
-    def validate_probe_types(self):
-        if isinstance(self.probe_types, str):
-            self.probe_types = [self.probe_types]
+    def validate_config(self):
+        # Validate probes
+        assert self.probes, "At least one probe must be specified"
+        for probe_name, probe_config in self.probes.items():
+            assert probe_config.type in ["logistic", "mlp", "sklearn_logistic"], (
+                f"Invalid probe type '{probe_config.type}' for probe '{probe_name}'. "
+                "Valid types are: 'logistic', 'mlp', 'sklearn_logistic'"
+            )
 
-            # Validate training datasets
-            for split_name, split_config in self.training_datasets.items():
-                assert isinstance(
-                    split_config, dict
-                ), f"Training dataset {split_name} must be a dict with 'harmful' and 'benign' keys"
-                assert set(split_config.keys()) <= {
-                    "harmful",
-                    "benign",
-                }, f"Training dataset {split_name} can only have 'harmful' and 'benign' keys, got: {list(split_config.keys())}"
+        # Validate training datasets
+        for split_name, split_config in self.training_datasets.items():
+            assert isinstance(
+                split_config, dict
+            ), f"Training dataset {split_name} must be a dict with 'harmful' and 'benign' keys"
+            assert set(split_config.keys()) <= {
+                "harmful",
+                "benign",
+            }, f"Training dataset {split_name} can only have 'harmful' and 'benign' keys, got: {list(split_config.keys())}"
 
-                for dataset_type, datasets in split_config.items():
-                    if dataset_type == "harmful":
-                        assert all(
-                            dataset in harmful_dataset_names for dataset in datasets
-                        ), f"Invalid harmful dataset in {split_name}: {datasets}. Valid datasets: {harmful_dataset_names}"
-                    elif dataset_type == "benign":
-                        assert all(
-                            dataset in benign_dataset_names for dataset in datasets
-                        ), f"Invalid benign dataset in {split_name}: {datasets}. Valid datasets: {benign_dataset_names}"
+            for dataset_type, datasets in split_config.items():
+                if dataset_type == "harmful":
+                    assert all(
+                        dataset in harmful_dataset_names for dataset in datasets
+                    ), f"Invalid harmful dataset in {split_name}: {datasets}. Valid datasets: {harmful_dataset_names}"
+                elif dataset_type == "benign":
+                    assert all(
+                        dataset in benign_dataset_names for dataset in datasets
+                    ), f"Invalid benign dataset in {split_name}: {datasets}. Valid datasets: {benign_dataset_names}"
 
         # Validate test datasets if provided
         if self.test_datasets is not None:
@@ -122,43 +148,22 @@ class ProbeTrainingConfig(BaseModel):
         return cls(**config)
 
 
-class WandBLogger:
-    """WandB logger that maintains compatibility with CSVTXTLogger interface."""
+class WandBLogger(Logger):
+    """WandB logger that maintains compatibility with obf_reps Logger interface."""
 
-    def __init__(self, config: ProbeTrainingConfig, print_logs_to_console: bool = True):
+    def __init__(
+        self,
+        config: ProbeTrainingConfig,
+        log_file: Optional[str] = None,
+        username: Optional[str] = None,
+        metadata: Optional[Dict] = None,
+        print_logs_to_console: bool = True,
+    ):
         self.print_logs_to_console = print_logs_to_console
         self.config = config
         self.run = None
         self.current_probe_type = None
-
-    def initialize_run(self, probe_type: str, metadata: Dict):
-        """Initialize a new WandB run for a specific probe type."""
-        if self.run is not None:
-            self.run.finish()
-
-        self.current_probe_type = probe_type
-        run_name = f"{probe_type}_probe"
-        if self.config.wandb_name:
-            run_name = f"{self.config.wandb_name}_{run_name}"
-
-        tags = self.config.wandb_tags or []
-        tags.append(probe_type)
-
-        self.run = wandb.init(
-            project=self.config.wandb_project,
-            entity=self.config.wandb_entity,
-            name=run_name,
-            tags=tags,
-            config={
-                "model_name_or_path": str(self.config.model_name_or_path),
-                "learning_rate": self.config.learning_rate,
-                "batch_size": self.config.batch_size,
-                "num_epochs": self.config.num_epochs,
-                "target_layers": self.config.target_layers,
-                "probe_type": probe_type,
-                **metadata,
-            },
-        )
+        self.tables: Dict[str, wandb.Table] = {}
 
     def print(self, msg: str) -> None:
         """Print message to console and log to WandB."""
@@ -167,11 +172,6 @@ class WandBLogger:
         if self.run:
             self.run.log({"console_output": msg})
 
-    def optional_print(self, msg: str) -> None:
-        """Print message to console if enabled."""
-        if self.print_logs_to_console:
-            print(msg)
-
     def log(self, data: Dict[str, Union[int, float, str]]) -> None:
         """Log key-value pairs to WandB."""
         if self.run:
@@ -179,58 +179,131 @@ class WandBLogger:
 
     def log_to_table(self, data: List, table_name: str) -> None:
         """Log tabular data to WandB."""
+        if table_name in self.tables and self.run:
+            # Add data to existing table
+            num_columns = len(self.tables[table_name].columns)
+            if len(data) != num_columns:
+                raise ValueError(
+                    f"Data length {len(data)} does not match table size {num_columns}"
+                )
+            self.tables[table_name].add_data(*data)
+
+    def create_table(self, table_name: str, columns: List[str]) -> None:
+        """Create a new WandB table."""
+        self.tables[table_name] = wandb.Table(columns=columns)
+
+    def log_tables(self) -> None:
+        """Log all tables to WandB."""
         if self.run:
+            self.run.log(self.tables)
+
+    def log_table_name(self, table_name: str) -> None:
+        """Log a specific table to WandB."""
+        if self.run and table_name in self.tables:
             table = wandb.Table(
-                data=data,
-                columns=[f"col_{i}" for i in range(len(data[0]))] if data else [],
+                columns=self.tables[table_name].columns,
+                data=self.tables[table_name].data,
             )
             self.run.log({table_name: table})
 
-    def create_table(self, table_name: str, columns: List[str]) -> None:
-        """Create empty table (no-op for WandB)."""
-        pass
+    def __del__(self):
+        """Finish the current WandB run and log tables."""
+        if self.run:
+            self.log_tables()
+            self.run.finish()
 
-    def log_tables(self) -> None:
-        """No-op for WandB compatibility."""
-        pass
+    # Additional helper methods for probe training
+    def initialize_run(self, probe_name: str, metadata: Dict):
+        """Initialize a new WandB run for a specific probe configuration."""
+        if self.run is not None:
+            self.run.finish()
 
-    def log_table_name(self, table_name: str) -> None:
-        """No-op for WandB compatibility."""
-        pass
+        self.current_probe_type = metadata.get("probe_type", "unknown")
+        run_name = probe_name
+        if self.config.wandb_name:
+            run_name = f"{self.config.wandb_name}_{run_name}"
 
-    def log_metrics(self, metrics: Dict[str, Dict[str, float]], probe_type: str):
-        """Log evaluation metrics to WandB."""
-        flattened_metrics = {}
+        tags = self.config.wandb_tags or []
+        tags.extend([probe_name, metadata.get("probe_type", "unknown")])
+
+        self.run = wandb.init(
+            project=self.config.wandb_project,
+            entity=self.config.wandb_entity,
+            name=run_name,
+            tags=tags,
+            config={
+                "model_name_or_path": str(self.config.model_name_or_path),
+                **metadata,
+            },
+        )
+
+    def optional_print(self, msg: str) -> None:
+        """Print message to console if enabled."""
+        if self.print_logs_to_console:
+            print(msg)
+
+    def log_metrics(self, metrics: Dict[str, Dict[str, float]], probe_name: str):
+        """Log evaluation metrics to WandB as separate tables for each metric."""
+        if not self.run:
+            return
+
+        # Create separate table for each metric type
         for split_name, split_metrics in metrics.items():
             for metric_name, value in split_metrics.items():
-                key = f"{split_name}/{metric_name}"
-                flattened_metrics[key] = value
+                table_name = f"{probe_name}_{metric_name}"
 
-        if self.run:
-            self.run.log(flattened_metrics)
+                # Create table if it doesn't exist
+                if table_name not in self.tables:
+                    self.create_table(table_name, ["split", "value", "ci_lower", "ci_upper"])
 
-    def log_scores(self, scores: Dict[str, Dict[str, List[float]]], probe_type: str):
-        """Log raw scores as histograms to WandB."""
+                if isinstance(value, (list, tuple)) and len(value) == 3:
+                    # Value is [estimate, ci_lower, ci_upper]
+                    self.log_to_table(
+                        [split_name, value[0], value[1], value[2]],
+                        table_name,
+                    )
+                else:
+                    # Single value
+                    self.log_to_table([split_name, value, None, None], table_name)
+
+                # Log the table immediately
+                self.log_table_name(table_name)
+
+    def log_scores(self, scores: Dict[str, Dict[str, List[float]]], probe_name: str):
+        """Log score statistics to WandB as separate tables for each score type."""
         if not self.run:
             return
 
         for split_name, split_scores in scores.items():
             for score_type, score_list in split_scores.items():
                 if score_list:  # Only log if there are scores
-                    self.run.log(
-                        {
-                            f"{split_name}/{score_type}_histogram": wandb.Histogram(score_list),
-                            f"{split_name}/{score_type}_mean": sum(score_list) / len(score_list),
-                            f"{split_name}/{score_type}_std": (
-                                sum(
-                                    (x - sum(score_list) / len(score_list)) ** 2
-                                    for x in score_list
-                                )
-                                / len(score_list)
-                            )
-                            ** 0.5,
-                        }
+                    table_name = f"{probe_name}_{score_type}_scores"
+
+                    # Create table if it doesn't exist
+                    if table_name not in self.tables:
+                        self.create_table(table_name, ["split", "mean", "std", "count"])
+
+                    mean_score = sum(score_list) / len(score_list)
+                    std_score = (
+                        sum((x - mean_score) ** 2 for x in score_list) / len(score_list)
+                    ) ** 0.5
+
+                    self.log_to_table(
+                        [split_name, mean_score, std_score, len(score_list)],
+                        table_name,
                     )
+
+                    # Log the table immediately
+                    self.log_table_name(table_name)
+
+    def log_combined_results(
+        self,
+        metrics: Dict[str, Dict[str, float]],
+        scores: Dict[str, Dict[str, List[float]]],
+        probe_name: str,
+    ):
+        """Deprecated: No longer creates combined table since we use separate tables for each metric."""
+        pass
 
     def finish(self):
         """Finish the current WandB run."""
@@ -278,7 +351,6 @@ def train_harmful_probe(
         batch_size=batch_size,
     )
 
-    logger.print("Configuring probe...")
     # Configure which layer(s) to probe
     config = MetricConfig(
         layers=target_layers,
@@ -288,18 +360,24 @@ def train_harmful_probe(
     )
 
     # Create the probe
-    if probe_type == "logistic":
-        metric = LogisticRegressionMetric(
-            model=model, data_module=data_module, config=config, logger=logger
-        )
-    else:
-        from obf_reps.metrics import MLPMetric
-
-        metric = MLPMetric(model=model, data_module=data_module, config=config, logger=logger)
+    match probe_type:
+        case "logistic":
+            metric = LogisticRegressionMetric(
+                model=model, data_module=data_module, config=config, logger=logger
+            )
+        case "mlp":
+            metric = MLPMetric(model=model, data_module=data_module, config=config, logger=logger)
+        case "sklearn_logistic":
+            metric = SklearnLogisticRegressionMetric(
+                model=model, data_module=data_module, config=config, logger=logger
+            )
+        case _:
+            raise ValueError(f"Invalid probe type: {probe_type}")
 
     logger.print("Finished training probe")
     # Freeze probe
-    metric.probe[0].requires_grad_(False)
+    if probe_type in ["logistic", "mlp"]:
+        metric.probe[0].requires_grad_(False)
 
     return metric
 
@@ -391,25 +469,32 @@ def train_and_evaluate_probes(config):
     # Results storage
     all_results = {}
 
-    # Train each probe type
-    for probe_type in config.probe_types:
-        logger.print(f"\n=== Training {probe_type} probe ===")
+    # Train each probe configuration
+    for probe_name, probe_config in config.probes.items():
+        logger.print(f"\n=== Training {probe_name} ({probe_config.type} probe) ===")
+
+        # Get probe-specific parameters
+        learning_rate = probe_config.learning_rate
+        batch_size = probe_config.batch_size
+        num_epochs = probe_config.num_epochs
+        target_layers = probe_config.target_layers
 
         # Create directory for this probe
         date_time = datetime.now().strftime("%Y%m%d_%H%M%S")
         directory = (
-            f"self_obfuscation_experiment/outputs/probe_checkpoints/{date_time}_{probe_type}_probe"
+            f"self_obfuscation_experiment/outputs/probe_checkpoints/{date_time}_{probe_name}"
         )
         os.makedirs(directory, exist_ok=True)
 
         # Save metadata
         metadata = {
             "date_time": date_time,
-            "target_layers": config.target_layers,
-            "probe_type": probe_type,
-            "learning_rate": config.learning_rate,
-            "batch_size": config.batch_size,
-            "num_epochs": config.num_epochs,
+            "probe_name": probe_name,
+            "probe_type": probe_config.type,
+            "target_layers": target_layers,
+            "learning_rate": learning_rate,
+            "batch_size": batch_size,
+            "num_epochs": num_epochs,
             "model_name_or_path": str(config.model_name_or_path),
             "dataset_sizes": {
                 split: {dtype: len(data) for dtype, data in split_data.items()}
@@ -418,8 +503,8 @@ def train_and_evaluate_probes(config):
             "directory": directory,
         }
 
-        # Initialize WandB run for this probe type
-        logger.initialize_run(probe_type, metadata)
+        # Initialize WandB run for this probe
+        logger.initialize_run(probe_name, metadata)
 
         # Train the probe
         trained_probe = train_harmful_probe(
@@ -427,11 +512,11 @@ def train_and_evaluate_probes(config):
             harmful_examples=datasets["train"]["harmful"],
             benign_examples=datasets["train"]["benign"],
             logger=logger,
-            target_layers=config.target_layers,
-            probe_type=probe_type,
-            learning_rate=config.learning_rate,
-            batch_size=config.batch_size,
-            num_epochs=config.num_epochs,
+            target_layers=target_layers,
+            probe_type=probe_config.type,
+            learning_rate=learning_rate,
+            batch_size=batch_size,
+            num_epochs=num_epochs,
         )
 
         with open(f"{directory}/metadata.json", "w") as f:
@@ -444,7 +529,7 @@ def train_and_evaluate_probes(config):
         with open(f"{directory}/probe.pkl", "wb") as f:
             pickle.dump(trained_probe, f)
 
-        logger.print(f"Saved {probe_type} probe to {directory}/probe.pkl")
+        logger.print(f"Saved {probe_name} probe to {directory}/probe.pkl")
 
         # Restore model reference for evaluation
         trained_probe.model = model
@@ -455,24 +540,25 @@ def train_and_evaluate_probes(config):
 
         for split_name, split_data in datasets.items():
             if "harmful" in split_data and "benign" in split_data:
-                logger.print(f"Evaluating {probe_type} probe on {split_name} set...")
+                logger.print(f"Evaluating {probe_name} probe on {split_name} set...")
 
                 # Create data module for evaluation
                 eval_data_module = ResponseProbeDataModule(
                     topical_prompts_and_responses=split_data["harmful"],
                     nontopical_prompts_and_responses=split_data["benign"],
-                    batch_size=config.batch_size,
+                    batch_size=batch_size,
                 )
 
                 # Get scores
                 scores = test_trainable_metric_on_response_data_module(
-                    model,
-                    trained_probe,
-                    logger,
-                    eval_data_module,
-                    metadata,
-                    config.target_layers,
-                    f"{probe_type}_probe_{split_name}",
+                    model=model,
+                    metric=trained_probe,
+                    logger=logger,
+                    data_module=eval_data_module,
+                    model_details=metadata,
+                    layers_to_probe=target_layers,
+                    custom_folder_name=f"{probe_name}_{split_name}",
+                    pooling_type=probe_config.pooling_type,
                 )
 
                 pos_scores = [score["pos_score"] for score in scores]
@@ -507,8 +593,9 @@ def train_and_evaluate_probes(config):
                 logger.print(f"  Recall@0.01%FPR: {recall01fpr}")
 
         # Log metrics and scores to WandB
-        logger.log_metrics(probe_results, probe_type)
-        logger.log_scores(all_scores, probe_type)
+        logger.log_metrics(probe_results, probe_name)
+        logger.log_scores(all_scores, probe_name)
+        logger.log_combined_results(probe_results, all_scores, probe_name)
 
         # Save detailed results
         with open(f"{directory}/results.json", "w") as f:
@@ -524,13 +611,13 @@ def train_and_evaluate_probes(config):
         logger.print(f"Saved detailed results to {directory}/")
 
         # Store in overall results
-        all_results[probe_type] = {
+        all_results[probe_name] = {
+            "probe_type": probe_config.type,
             "directory": directory,
             "metrics": probe_results,
             "scores": all_scores,
         }
 
-    # Finish WandB logging
     logger.finish()
 
     return all_results
@@ -546,8 +633,8 @@ if __name__ == "__main__":
 
     # Print final summary
     print("\n=== FINAL SUMMARY ===")
-    for probe_type, probe_results in results.items():
-        print(f"\n{probe_type.upper()} PROBE:")
+    for probe_name, probe_results in results.items():
+        print(f"\n{probe_name} ({probe_results['probe_type']} probe):")
         print(f"  Directory: {probe_results['directory']}")
         for split_name, metrics in probe_results["metrics"].items():
             print(f"  {split_name}:")
