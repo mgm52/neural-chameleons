@@ -16,7 +16,8 @@ import numpy as np
 import torch
 import tqdm
 from jaxtyping import Bool, Float
-#from sae import Sae  # For Eleuther SAEs for Llama-3-8b
+
+# from sae import Sae  # For Eleuther SAEs for Llama-3-8b
 from sae_lens import SAE  # For SAEs for Gemma-2-2b
 from sklearn.decomposition import PCA
 from torch import Tensor
@@ -24,7 +25,13 @@ from torch import Tensor
 from obf_reps.data import ConceptDataModule, ConceptDataset, ObfusDataset
 from obf_reps.data.data_utils import join_concept_obfus_datasets
 from obf_reps.logging import Logger
-from obf_reps.metrics.probes import MLP, VAE, LogisticRegression, SAEClassifier
+from obf_reps.metrics.probes import (
+    MLP,
+    VAE,
+    AttentionMLP,
+    LogisticRegression,
+    SAEClassifier,
+)
 from obf_reps.models import ForwardReturn, ModelBase
 
 DEBUG = False
@@ -40,7 +47,7 @@ def get_tensor_size_in_gb(tensor: torch.Tensor) -> float:
 
 
 def get_dataset_size_in_gb(
-    dataset: List[Tuple[Float[Tensor, "1 layers red_seq_len h_dim"], Float[Tensor, ""]]]
+    dataset: List[Tuple[Float[Tensor, "1 layers red_seq_len h_dim"], Float[Tensor, ""]]],
 ) -> float:
     total_size = 0
     for rep, label in dataset:
@@ -58,7 +65,6 @@ class CachedReps:
 
     @staticmethod
     def combine(cached_reps: List[CachedRepsT]) -> RepsDatasetT:
-
         combined_dataset = []
         for cache in cached_reps:
             combined_dataset.extend(cache.rep_dataset)
@@ -107,7 +113,9 @@ class ObfMetric(ABC):
         self.model_num_layers = self.model.model.config.num_hidden_layers
 
         self.data_module = data_module
-        logger.print(f"Loaded data module with data_module.train_dataset of length {len(self.data_module.train_dataset)}")
+        logger.print(
+            f"Loaded data module with data_module.train_dataset of length {len(self.data_module.train_dataset)}"
+        )
         self.config = config
         self.logger = logger
 
@@ -122,7 +130,6 @@ class ObfMetric(ABC):
             self.load_pretrained(probe_path)
             self.load_pca(pca_path)
         else:
-
             # In this case we need the train_rep_dataset
             print("Getting train reps")
             train_rep_dataset = self.get_reps_from_dataset(
@@ -141,10 +148,10 @@ class ObfMetric(ABC):
                 self.fit(train_rep_dataset)
             else:
                 self.load_pretrained(probe_path)
-            if pca_path is None:
-                self.pca = self.train_pca(train_rep_dataset)
-            else:
-                self.load_pca(pca_path)
+            # if pca_path is None and False:
+            #     self.pca = self.train_pca(train_rep_dataset)
+            # else:
+            #     self.load_pca(pca_path)
 
         # Tune hyper params, such as threshold
         # val_rep_dataset = self.get_reps_from_dataset(
@@ -358,15 +365,17 @@ class ObfMetric(ABC):
             "clear_gpu_cache": 0.0,
         }
 
-        print(f"Getting reps from dataset of len {len(dataset)} with layers_to_probe {layers_to_probe}")
+        print(
+            f"Getting reps from dataset of len {len(dataset)} with layers_to_probe {layers_to_probe}"
+        )
 
         for i, ((pos_input, pos_target), (neg_input, neg_target)) in enumerate(tqdm.tqdm(dataset)):
             # Time positive forward pass
             t0 = time.perf_counter()
-            
+
             # Handle both string inputs and token_id inputs
             if isinstance(pos_input, str) and isinstance(pos_target, str):
-                #print(f"Getting forward from string")
+                # print(f"Getting forward from string")
                 positive_rep: ForwardReturn = model.forward_from_string(
                     input_text=pos_input,
                     target_text=pos_target,
@@ -376,7 +385,7 @@ class ObfMetric(ABC):
                 )
             elif isinstance(pos_input, str) and isinstance(pos_target, list):
                 # Assume token_ids
-                #print(f"Getting forward from string and ids, with pos_target {pos_target}")
+                # print(f"Getting forward from string and ids, with pos_target {pos_target}")
                 positive_rep: ForwardReturn = model.forward_from_string_and_ids(
                     input_text=pos_input,
                     target_ids=torch.tensor(pos_target, device=model.device).unsqueeze(0),
@@ -385,15 +394,17 @@ class ObfMetric(ABC):
                     target_attn_mask=None,
                     add_chat_template=True,
                 )
-                #print(f"Got positive_rep with input_ids {positive_rep.input_ids}, target_ids {positive_rep.target_ids}, target_reps {positive_rep.target_reps}")
+                # print(f"Got positive_rep with input_ids {positive_rep.input_ids}, target_ids {positive_rep.target_ids}, target_reps {positive_rep.target_reps}")
             else:
-                raise ValueError(f"Unexpected pos input type: {type(pos_input)} and target type: {type(pos_target)}")
-            
+                raise ValueError(
+                    f"Unexpected pos input type: {type(pos_input)} and target type: {type(pos_target)}"
+                )
+
             timings["positive_forward"] += time.perf_counter() - t0
 
             # Time negative forward pass
             t0 = time.perf_counter()
-            
+
             # Handle both string inputs and token_id inputs
             if isinstance(neg_input, str) and isinstance(neg_target, str):
                 negative_rep: ForwardReturn = model.forward_from_string(
@@ -414,8 +425,10 @@ class ObfMetric(ABC):
                     layers_to_probe=layers_to_probe,
                 )
             else:
-                raise ValueError(f"Unexpected neg input type: {type(neg_input)} and target type: {type(neg_target)}")
-            
+                raise ValueError(
+                    f"Unexpected neg input type: {type(neg_input)} and target type: {type(neg_target)}"
+                )
+
             timings["negative_forward"] += time.perf_counter() - t0
 
             # Time reduce and processing
@@ -482,8 +495,8 @@ class ObfMetric(ABC):
         print(f"Get Reps Timings: \n{timings}")
         print(f"Dataset len: {len(dataset)}")
 
-        print(f"Average pos target len: {pos_target_len/(i+1)}")
-        print(f"Average neg target len: {neg_target_len/(i+1)}")
+        print(f"Average pos target len: {pos_target_len / (i + 1)}")
+        print(f"Average neg target len: {neg_target_len / (i + 1)}")
 
         random.shuffle(reps_dataset)
 
@@ -497,13 +510,13 @@ class ObfMetric(ABC):
         use_tunable_params: bool = True,
     ) -> Float[Tensor, "1 layers red_seq_len h_dim"]:
         """Get reps from a single input and target from the model.
-        
+
         Args:
             input_text_or_ids: Either a string or a list of token IDs for the input
             target_text_or_ids: Either a string or a list of token IDs for the target
             reps_reduce: Function to reduce the representations
             use_tunable_params: Whether to use tunable parameters
-            
+
         Returns:
             Reduced representation tensor
         """
@@ -523,8 +536,12 @@ class ObfMetric(ABC):
                 use_tunable_params=use_tunable_params,
                 layers_to_probe=self.config.layers,
             )
-        
-        input_reps, target_reps, target_mask = rep.input_reps, rep.target_reps, rep.loss_mask
+
+        input_reps, target_reps, target_mask = (
+            rep.input_reps,
+            rep.target_reps,
+            rep.loss_mask,
+        )
         reduced_rep, _ = reps_reduce(input_reps, target_reps, target_mask)
         return reduced_rep.detach().to("cpu")
 
@@ -578,7 +595,6 @@ class CosineSimMetric(ObfMetric, ABC):
         reps: Float[Tensor, "b layers seq_len hidden_dim"],
         **kwargs,
     ) -> Float[Tensor, "b layers seq_len"]:
-
         reps = reps.to(torch.float32)
         direction = self.get_direction().to(torch.float32)
 
@@ -670,7 +686,6 @@ class MeanDiffCosineSimMetric(CosineSimMetric):
         reps_dataset: RepsDatasetT,
         **kwargs,
     ):
-
         device = self.device
         num_layers = self.model_num_layers + 1  # Data comes with embedding
         hidden_size = self.model_hidden_dim
@@ -681,7 +696,6 @@ class MeanDiffCosineSimMetric(CosineSimMetric):
         neg_count = 0
 
         for rep, label in reps_dataset:
-
             _, layers, seq_len, hidden_dim = rep.shape
             rep = rep.squeeze(0).to(device)  # [layers, pos_seq_len, hidden_dim]
 
@@ -748,7 +762,6 @@ class PCACosineSimMetric(CosineSimMetric):
         reps_dataset: RepsDatasetT,
         **kwargs,
     ):
-
         # Metric should only be used when red_seq_len is 1
         for example in reps_dataset:
             rep = example[0]
@@ -801,6 +814,7 @@ class TrainableMetric(ObfMetric):
         reps_dataset: RepsDatasetT,
         **kwargs,
     ):
+        print("STARTING FIT")
         device = self.device
 
         # Concatenate all reps and labels, treating each token as an independent example
@@ -832,7 +846,9 @@ class TrainableMetric(ObfMetric):
             y_train = labels
 
             model = self.create_model(hidden_size).to(device)
-            optimizer = torch.optim.Adam(model.parameters(), lr=self.config.lr, weight_decay=1e-5, eps=1e-5)
+            optimizer = torch.optim.Adam(
+                model.parameters(), lr=self.config.lr, weight_decay=1e-5, eps=1e-5
+            )
             criterion = torch.nn.BCEWithLogitsLoss()
 
             dataloader = torch.utils.data.DataLoader(
@@ -841,15 +857,15 @@ class TrainableMetric(ObfMetric):
                 shuffle=True,
             )
 
-            print(f"Fitting layer {layer} probe ({layer_index+1} / {n_layers})")
+            print(f"Fitting layer {layer} probe ({layer_index + 1} / {n_layers})")
             for epoch in range(self.config.num_epochs):
-                pbar = tqdm.tqdm(dataloader, desc=f'Epoch {epoch+1}/{self.config.num_epochs}')
+                pbar = tqdm.tqdm(dataloader, desc=f"Epoch {epoch + 1}/{self.config.num_epochs}")
                 recent_losses = []
                 loss_memory = 10
                 recent_avg = -1
                 for i, (X, y) in enumerate(pbar):
                     optimizer.zero_grad()
-                    outputs = model(X.to(device)) # Should be [batch_size, 1]
+                    outputs = model(X.to(device))  # Should be [batch_size, 1]
                     if outputs.dim() == 2 and outputs.shape[-1] == 1:
                         outputs = outputs.squeeze(-1)
                     loss = criterion(outputs, y.to(device))
@@ -863,9 +879,9 @@ class TrainableMetric(ObfMetric):
                         recent_losses = []
 
                     if recent_avg > -1:
-                        pbar.set_postfix({f'loss{loss_memory}': f'{recent_avg:.4f}'})
-                    
-                    self.logger.log({f"probe_loss_layer_{layer}": loss.item()})
+                        pbar.set_postfix({f"loss{loss_memory}": f"{recent_avg:.4f}"})
+
+                    # self.logger.log({f"probe_loss_layer_{layer}": loss.item()})
                 pbar.close()
 
             self.probe[layer_index] = model
@@ -903,7 +919,6 @@ class TrainableMetric(ObfMetric):
         layer_reduction: str = "mean",
         **kwargs,
     ) -> Float[Tensor, "b"]:
-
         b, layers, seq_len, hidden_dim = reps.shape
         if b > 1:
             assert attention_mask is not None, "Attention mask must be provided for batch size > 1"
@@ -946,7 +961,6 @@ class TrainableMetric(ObfMetric):
         layer_reduction: str = "mean",
         **kwargs,
     ) -> Float[Tensor, "b"]:
-
         b, layers, seq_len, hidden_dim = reps.shape
         if b > 1:
             assert attention_mask is not None, "Attention mask must be provided for batch size > 1"
@@ -1003,13 +1017,11 @@ class TrainableMetric(ObfMetric):
 
 
 class LogisticRegressionMetric(TrainableMetric):
-
     def create_model(self, hidden_size) -> torch.nn.Module:
         return LogisticRegression(hidden_size)
 
 
 class MLPMetric(TrainableMetric):
-
     def create_model(self, hidden_size) -> torch.nn.Module:
         return MLP(hidden_size)
 
@@ -1155,7 +1167,6 @@ class GemmaScopeFeatureMetric(ObfMetric):
         reps_dataset: RepsDatasetT,
         **kwargs,
     ):
-
         # TODO: Alex, is this ok that this metric takes in reps with seq_len == 1?
 
         """Select which layers and which features we care about and initialize the SAE."""
@@ -1235,7 +1246,9 @@ class GemmaScopeFeatureMetric(ObfMetric):
             hidden_states = reps[:, layer_idx + 1, :, :]
             sae = self.probe[layer_idx]
             sae_acts: Float[Tensor, "b seq_len d_sae"] = sae.encode_jumprelu(hidden_states)
-            features = feature_list_dict[layer_num] # TODO: double check that this should be layer_num and not layer_idx
+            features = feature_list_dict[
+                layer_num
+            ]  # TODO: double check that this should be layer_num and not layer_idx
             num_features = len(features)
             sae_acts: Float[Tensor, "b seq_len num_feats"] = sae_acts[:, :, features]
             sae_acts: Float[Tensor, "b num_feats seq_len"] = sae_acts.permute(0, 2, 1)
@@ -1286,7 +1299,6 @@ class GemmaScopeFeatureMetric(ObfMetric):
 
 
 class MahalanobisDistanceMetric(ObfMetric):
-
     def fit(self, reps_dataset: RepsDatasetT, **kwargs):
         # Extract negative examples
 
@@ -1298,7 +1310,8 @@ class MahalanobisDistanceMetric(ObfMetric):
         # Concatenate negative reps into a single tensor
         # Concat over b and seq_len
         negative_reps = torch.cat(
-            [rep.view(-1, rep.shape[1], rep.shape[-1]) for rep in negative_reps_list], dim=0
+            [rep.view(-1, rep.shape[1], rep.shape[-1]) for rep in negative_reps_list],
+            dim=0,
         )
 
         # Resulting shape: [total_examples, layers, hidden_dim]
@@ -1389,7 +1402,6 @@ class MahalanobisDistanceMetric(ObfMetric):
         layer_reduction: str = "mean",
         **kwargs,
     ) -> Float[Tensor, "b"]:
-
         b, n_layers, seq_len, hidden_dim = reps.shape
         if b > 1:
             assert attention_mask is not None, "Attention mask is required for batch size > 1"
@@ -1547,7 +1559,6 @@ class EnsembleMetric(ObfMetric):
         self,
         path: Optional[str] = None,
     ) -> None | Any:
-
         if path is not None:
             probe_states = [metric.save_probe() for metric in self.metrics]
             with open(path, "wb") as f:
@@ -1558,7 +1569,6 @@ class EnsembleMetric(ObfMetric):
 
 
 class MeanEnsembleMetric(EnsembleMetric):
-
     def __init__(
         self,
         model: ModelBase,
@@ -1580,7 +1590,6 @@ class MeanEnsembleMetric(EnsembleMetric):
 
 
 class MaxEnsembleMetric(EnsembleMetric):
-
     def __init__(
         self,
         model: ModelBase,
@@ -1691,7 +1700,8 @@ class VAEMetric(ObfMetric):
         _, layers, _, hidden_dim = negative_reps_list[0].shape
         # Concatenate negative reps into a single tensor
         negative_reps = torch.cat(
-            [rep.view(-1, rep.shape[1], rep.shape[-1]) for rep in negative_reps_list], dim=0
+            [rep.view(-1, rep.shape[1], rep.shape[-1]) for rep in negative_reps_list],
+            dim=0,
         )
         # Shuffle along axis 0 (examples dimension)
         shuffle_idx = torch.randperm(negative_reps.shape[0])

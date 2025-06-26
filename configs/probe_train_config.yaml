@@ -1,0 +1,30 @@
+model_name_or_path: "gemma_2_9b_instruct"
+
+# Training parameters
+learning_rate: 4e-5
+batch_size: 64
+num_epochs: 1
+target_layers: [12]
+
+probe_types: ["logistic", "mlp"]
+
+# Dataset configuration
+# Each split will be evaluated separately
+training_datasets:
+  train:
+    harmful: ["circuit_breakers_train"]
+    benign: ["benign_instructions_train", "xstest"]
+
+test_datasets:
+  test:
+    harmful: ["circuit_breakers_test"]
+    benign: ["benign_instructions_test"]
+  ood:
+    harmful: ["harmful_gcg", "harmful_prefill", "harmful_autodan"]
+    benign: ["xstest"]
+
+# wandb configuration
+wandb_project: "probe-training"
+wandb_entity: 4002tsa
+wandb_name: null
+wandb_tags: []

@@ -1,5 +1,6 @@
 import torch
-#from sae import Sae  # For Eleuther SAEs for Llama-3-8b
+
+# from sae import Sae  # For Eleuther SAEs for Llama-3-8b
 
 
 class LogisticRegression(torch.nn.Module):
@@ -134,7 +135,6 @@ class VAE(torch.nn.Module):
     def forward(
         self, input: torch.Tensor, noise: bool = True, **kwargs
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-
         mu, log_var = self.encode(input)
         if noise:
             z = self.reparameterize(mu, log_var)

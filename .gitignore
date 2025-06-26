@@ -8,6 +8,7 @@ build/
 models/
 
 # Venv
+.claude/
 .venv/
 .DS_Store/
 .vscode/
