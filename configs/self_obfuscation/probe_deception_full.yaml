@@ -25,13 +25,13 @@ probes:
 # Each split will be evaluated separately
 training_datasets:
   train:
-    harmful: ["dolus_deceptive_train"]
-    benign: ["dolus_benign_train"]
+    positive: ["dolus_deceptive_train"]
+    negative: ["dolus_benign_train"]
 
 test_datasets:
   test:
-    harmful: ["dolus_deceptive_test"]
-    benign: ["dolus_benign_test"]
+    positive: ["dolus_deceptive_test"]
+    negative: ["dolus_benign_test"]
   # + APOLLO STUFF in ood
 
 wandb_project: "probe-training"

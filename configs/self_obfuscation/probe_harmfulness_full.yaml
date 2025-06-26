@@ -25,16 +25,16 @@ probes:
 # Each split will be evaluated separately
 training_datasets:
   train:
-    harmful: ["circuit_breakers_train"]
-    benign: ["benign_instructions_train"]
+    positive: ["circuit_breakers_train"]
+    negative: ["benign_instructions_train"]
 
 test_datasets:
   test:
-    harmful: ["circuit_breakers_test"]
-    benign: ["benign_instructions_test"]
+    positive: ["circuit_breakers_test"]
+    negative: ["benign_instructions_test"]
   ood:
-    harmful: ["circuit_breakers_test"]
-    benign: ["xstest"]
+    positive: ["circuit_breakers_test"]
+    negative: ["xstest"]
 
 wandb_project: "probe-training"
 wandb_entity: 4002tsa

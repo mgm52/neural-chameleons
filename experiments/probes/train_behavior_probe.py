@@ -1,5 +1,5 @@
 """
-Trains a harmful-jailbreak probe to distinguish between harmful and benign examples.
+Trains a behavioral probe to distinguish between positive and negative examples.
 
 INPUTS:
 - Model checkpoint or model name
@@ -37,7 +37,7 @@ from obf_reps.metrics import (
     SklearnLogisticRegressionMetric,
 )
 
-harmful_dataset_names = [
+positive_dataset_names = [
     "circuit_breakers_train",
     "circuit_breakers_test",
     "harmful_autodan",
@@ -50,7 +50,7 @@ harmful_dataset_names = [
     "harmful_prefill",
 ]
 
-benign_dataset_names = [
+negative_dataset_names = [
     "xstest",
     "benign_instructions_train",
     "benign_instructions_test",
@@ -101,42 +101,42 @@ class ProbeTrainingConfig(BaseModel):
         for split_name, split_config in self.training_datasets.items():
             assert isinstance(
                 split_config, dict
-            ), f"Training dataset {split_name} must be a dict with 'harmful' and 'benign' keys"
+            ), f"Training dataset {split_name} must be a dict with 'positive' and 'negative' keys"
             assert set(split_config.keys()) <= {
-                "harmful",
-                "benign",
-            }, f"Training dataset {split_name} can only have 'harmful' and 'benign' keys, got: {list(split_config.keys())}"
+                "positive",
+                "negative",
+            }, f"Training dataset {split_name} can only have 'positive' and 'negative' keys, got: {list(split_config.keys())}"
 
             for dataset_type, datasets in split_config.items():
-                if dataset_type == "harmful":
+                if dataset_type == "positive":
                     assert all(
-                        dataset in harmful_dataset_names for dataset in datasets
-                    ), f"Invalid harmful dataset in {split_name}: {datasets}. Valid datasets: {harmful_dataset_names}"
-                elif dataset_type == "benign":
+                        dataset in positive_dataset_names for dataset in datasets
+                    ), f"Invalid positive dataset in {split_name}: {datasets}. Valid datasets: {positive_dataset_names}"
+                elif dataset_type == "negative":
                     assert all(
-                        dataset in benign_dataset_names for dataset in datasets
-                    ), f"Invalid benign dataset in {split_name}: {datasets}. Valid datasets: {benign_dataset_names}"
+                        dataset in negative_dataset_names for dataset in datasets
+                    ), f"Invalid negative dataset in {split_name}: {datasets}. Valid datasets: {negative_dataset_names}"
 
         # Validate test datasets if provided
         if self.test_datasets is not None:
             for split_name, split_config in self.test_datasets.items():
                 assert isinstance(
                     split_config, dict
-                ), f"Test dataset {split_name} must be a dict with 'harmful' and 'benign' keys"
+                ), f"Test dataset {split_name} must be a dict with 'positive' and 'negative' keys"
                 assert set(split_config.keys()) <= {
-                    "harmful",
-                    "benign",
-                }, f"Test dataset {split_name} can only have 'harmful' and 'benign' keys, got: {list(split_config.keys())}"
+                    "positive",
+                    "negative",
+                }, f"Test dataset {split_name} can only have 'positive' and 'negative' keys, got: {list(split_config.keys())}"
 
                 for dataset_type, datasets in split_config.items():
-                    if dataset_type == "harmful":
+                    if dataset_type == "positive":
                         assert all(
-                            dataset in harmful_dataset_names for dataset in datasets
-                        ), f"Invalid harmful dataset in {split_name}: {datasets}. Valid datasets: {harmful_dataset_names}"
-                    elif dataset_type == "benign":
+                            dataset in positive_dataset_names for dataset in datasets
+                        ), f"Invalid positive dataset in {split_name}: {datasets}. Valid datasets: {positive_dataset_names}"
+                    elif dataset_type == "negative":
                         assert all(
-                            dataset in benign_dataset_names for dataset in datasets
-                        ), f"Invalid benign dataset in {split_name}: {datasets}. Valid datasets: {benign_dataset_names}"
+                            dataset in negative_dataset_names for dataset in datasets
+                        ), f"Invalid negative dataset in {split_name}: {datasets}. Valid datasets: {negative_dataset_names}"
 
         return self
 
@@ -312,10 +312,10 @@ class WandBLogger(Logger):
             self.run = None
 
 
-def train_harmful_probe(
+def train_behavioral_probe(
     model,
-    harmful_examples,
-    benign_examples,
+    positive_examples,
+    negative_examples,
     logger,
     target_layers,
     probe_type="logistic",
@@ -324,12 +324,12 @@ def train_harmful_probe(
     num_epochs=5,
 ):
     """
-    Train a probe to distinguish between harmful and benign examples.
+    Train a probe to distinguish between positive and negative examples.
 
     Args:
         model: The model to extract representations from
-        harmful_examples: List of (prompt, response) tuples for harmful examples
-        benign_examples: List of (prompt, response) tuples for benign examples
+        positive_examples: List of (prompt, response) tuples for positive examples
+        negative_examples: List of (prompt, response) tuples for negative examples
         logger: Logger for tracking training progress
         target_layers: List of layer indices to probe
         probe_type: Type of probe to use ("logistic" or "mlp")
@@ -341,13 +341,13 @@ def train_harmful_probe(
         Trained probe
     """
     logger.print(
-        f"Creating data module with {len(harmful_examples)} harmful and {len(benign_examples)} benign examples..."
+        f"Creating data module with {len(positive_examples)} positive and {len(negative_examples)} negative examples..."
     )
 
     # Create the data module using ResponseProbeDataModule from conditional_training.py
     data_module = ResponseProbeDataModule(
-        topical_prompts_and_responses=harmful_examples,
-        nontopical_prompts_and_responses=benign_examples,
+        topical_prompts_and_responses=positive_examples,
+        nontopical_prompts_and_responses=negative_examples,
         batch_size=batch_size,
     )
 
@@ -507,10 +507,10 @@ def train_and_evaluate_probes(config):
         logger.initialize_run(probe_name, metadata)
 
         # Train the probe
-        trained_probe = train_harmful_probe(
+        trained_probe = train_behavioral_probe(
             model=model,
-            harmful_examples=datasets["train"]["harmful"],
-            benign_examples=datasets["train"]["benign"],
+            positive_examples=datasets["train"]["positive"],
+            negative_examples=datasets["train"]["negative"],
             logger=logger,
             target_layers=target_layers,
             probe_type=probe_config.type,
@@ -539,13 +539,13 @@ def train_and_evaluate_probes(config):
         all_scores = {}
 
         for split_name, split_data in datasets.items():
-            if "harmful" in split_data and "benign" in split_data:
+            if "positive" in split_data and "negative" in split_data:
                 logger.print(f"Evaluating {probe_name} probe on {split_name} set...")
 
                 # Create data module for evaluation
                 eval_data_module = ResponseProbeDataModule(
-                    topical_prompts_and_responses=split_data["harmful"],
-                    nontopical_prompts_and_responses=split_data["benign"],
+                    topical_prompts_and_responses=split_data["positive"],
+                    nontopical_prompts_and_responses=split_data["negative"],
                     batch_size=batch_size,
                 )
 
