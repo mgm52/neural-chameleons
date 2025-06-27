@@ -309,6 +309,7 @@ def evaluate_metric(
         validation_dataset,
         reps_reduce=concept_data_module.test_reps_reduce,
         use_tunable_params=False,
+        batch_size=getattr(metric.config, "batch_size", 1),
     )
 
     std_predict_scores_list = []
@@ -338,6 +339,7 @@ def evaluate_metric(
         validation_dataset,
         reps_reduce=concept_data_module.test_reps_reduce,
         use_tunable_params=True,
+        batch_size=getattr(metric.config, "batch_size", 1),
     )
 
     tuned_predict_scores_list = []

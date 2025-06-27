@@ -18,7 +18,7 @@ probes:
   mlp_baseline:
     type: "mlp"
     learning_rate: 4e-5
-    batch_size: 128
+    batch_size: 16
     num_epochs: 1
     target_layers: [12]
     pooling_type: "mean"

@@ -46,7 +46,7 @@ from obf_reps.data import (
     TruthfulConceptDataModule,
 )
 from obf_reps.logging import DummyLogger, WAndBLogger
-from obf_reps.metrics import (
+from obf_reps.metrics import (  # SAEClassifierMetric,
     GemmaScopeClassifierMetric,
     GemmaScopeFeatureMetric,
     LogisticRegressionMetric,
@@ -61,7 +61,6 @@ from obf_reps.metrics import (
     MetricConfig,
     MLPMetric,
     ObfMetric,
-    #SAEClassifierMetric,
     TestCachedReps,
     VAEMetric,
 )
@@ -622,6 +621,7 @@ def get_test_cached_reps(
         validation_dataset,
         metric.train_reps_reduce,
         use_tunable_params=True,
+        batch_size=getattr(metric.config, "batch_size", 1),
     )
 
     obf_reps = [test_rep for test_rep, label in test_reps if label == 1]
