@@ -2,36 +2,41 @@ model_name_or_path: "gemma_2_9b_instruct"
 
 # Probe configurations
 probes:
-  sklearn_logistic_baseline:
-    type: "sklearn_logistic"
-    C: 0.01
-    target_layers: [12]
-    batch_size: 64
-    num_epochs: 1
-    pooling_type: "mean"
+  # sklearn_logistic_baseline:
+  #   type: "sklearn_logistic"
+  #   C: 0.001
+  #   target_layers: [12]
+  #   batch_size: 64
+  #   num_epochs: 1
+  #   pooling_type: "mean"
   # logistic_baseline:
   #   type: "logistic"
   #   learning_rate: 4e-5
   #   batch_size: 64
   #   num_epochs: 1
   #   target_layers: [12]
-  # mlp_baseline:
-  #   type: "mlp"
-  #   learning_rate: 4e-5
-  #   batch_size: 64
-  #   num_epochs: 1
-  #   target_layers: [12]
+  mlp_baseline:
+    type: "mlp"
+    learning_rate: 4e-5
+    batch_size: 128
+    num_epochs: 1
+    target_layers: [12]
+    pooling_type: "mean"
 
 # Each split will be evaluated separately
 training_datasets:
   train:
-    positive: ["circuit_breakers_train"]
-    negative: ["benign_instructions_train"]
+    positive: ["circuit_breakers_train", "wildjailbreak_harmful"]
+    negative: ["benign_instructions_train", "wildjailbreak_benign"]
+    # positive: ["wildjailbreak_harmful"]
+    # negative: ["wildjailbreak_benign"]
 
 test_datasets:
   test:
     positive: ["circuit_breakers_test"]
-    negative: ["benign_instructions_test"]
+    negative: ["benign_instructions_test", "xstest"]
+    # positive: ["wildjailbreak_eval_harmful"]
+    # negative: ["wildjailbreak_eval_benign"]
 
 wandb_project: "probe-training"
 wandb_entity: 4002tsa

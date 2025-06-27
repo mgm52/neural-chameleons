@@ -9,18 +9,6 @@ probes:
     batch_size: 64
     num_epochs: 1
     pooling_type: "mean"
-  # logistic_baseline:
-  #   type: "logistic"
-  #   learning_rate: 4e-5
-  #   batch_size: 64
-  #   num_epochs: 1
-  #   target_layers: [12]
-  # mlp_baseline:
-  #   type: "mlp"
-  #   learning_rate: 4e-5
-  #   batch_size: 64
-  #   num_epochs: 1
-  #   target_layers: [12]
 
 # Each split will be evaluated separately
 training_datasets:

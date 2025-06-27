@@ -161,9 +161,6 @@ def test_trainable_metric_on_response_data_module(
             f"{custom_folder_name}_trainable_metric_scores",
         )
 
-    logger.print(
-        "Finished evaluating the trainable metric on the ResponseProbeDataModule test set."
-    )
     return all_results
 
 

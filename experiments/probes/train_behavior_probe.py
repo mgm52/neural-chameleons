@@ -19,11 +19,11 @@ from pathlib import Path
 from typing import Dict, List, Literal, Optional, Union
 
 import yaml
+from dataset_adapters import get_adapter
 from pydantic import BaseModel, model_validator
 from utils_plotting import compute_metric_bootstrap
 
 import wandb
-from datasets import load_dataset
 from experiments.self_obfuscation_main.utils_misc import load_local_model
 from experiments.self_obfuscation_main.utils_testing import (
     test_trainable_metric_on_response_data_module,
@@ -48,12 +48,14 @@ positive_dataset_names = [
     "harmful_instructions_train",
     "harmful_instructions_test",
     "harmful_prefill",
+    "wildjailbreak_harmful",
 ]
 
 negative_dataset_names = [
     "xstest",
     "benign_instructions_train",
     "benign_instructions_test",
+    "wildjailbreak_benign",
 ]
 
 
@@ -397,23 +399,19 @@ def preprocess_dataset(dataset):
     return clean_dataset
 
 
-def extract_examples_from_datasets(dataset_names, jailbreaks_dataset):
-    """Extract examples from multiple datasets without sampling."""
+def extract_examples_from_datasets(dataset_names):
+    """Extract examples from multiple datasets using appropriate adapters."""
     examples = []
 
     for dataset_name in dataset_names:
-        if dataset_name in jailbreaks_dataset:
-            dataset = jailbreaks_dataset[dataset_name]
-            # Extract (prompt, completion) tuples from each dataset
-            for item in dataset:
-                prompt = item["prompt"]
-                completion = item.get("completion", "")
-                examples.append((prompt, completion))
+        adapter = get_adapter(dataset_name)
+        dataset_examples = adapter.load_and_extract_examples(dataset_name)
+        examples.extend(dataset_examples)
 
     return examples
 
 
-def load_datasets_from_config(config, jailbreaks_dataset):
+def load_datasets_from_config(config):
     """Load datasets based on configuration."""
     datasets = {}
 
@@ -421,9 +419,7 @@ def load_datasets_from_config(config, jailbreaks_dataset):
     for split_name, split_config in config.training_datasets.items():
         datasets[split_name] = {}
         for dataset_type, dataset_names in split_config.items():
-            # Extract all examples from the specified datasets
-            raw_examples = extract_examples_from_datasets(dataset_names, jailbreaks_dataset)
-            # Preprocess the examples
+            raw_examples = extract_examples_from_datasets(dataset_names)
             datasets[split_name][dataset_type] = preprocess_dataset(raw_examples)
 
     # Load test datasets if provided
@@ -431,9 +427,7 @@ def load_datasets_from_config(config, jailbreaks_dataset):
         for split_name, split_config in config.test_datasets.items():
             datasets[split_name] = {}
             for dataset_type, dataset_names in split_config.items():
-                # Extract all examples from the specified datasets
-                raw_examples = extract_examples_from_datasets(dataset_names, jailbreaks_dataset)
-                # Preprocess the examples
+                raw_examples = extract_examples_from_datasets(dataset_names)
                 datasets[split_name][dataset_type] = preprocess_dataset(raw_examples)
 
     return datasets
@@ -445,11 +439,8 @@ def train_and_evaluate_probes(config):
     logger = WandBLogger(config, print_logs_to_console=True)
     logger.print("Starting probe training and evaluation...")
 
-    # Load jailbreaks dataset
-    jailbreaks_dataset = load_dataset("Mechanistic-Anomaly-Detection/gemma2-jailbreaks")
-
     # Load datasets based on configuration
-    datasets = load_datasets_from_config(config, jailbreaks_dataset)
+    datasets = load_datasets_from_config(config)
 
     # Print dataset information
     for split_name, split_data in datasets.items():
@@ -495,11 +486,34 @@ def train_and_evaluate_probes(config):
             "learning_rate": learning_rate,
             "batch_size": batch_size,
             "num_epochs": num_epochs,
+            "pooling_type": probe_config.pooling_type,
             "model_name_or_path": str(config.model_name_or_path),
             "dataset_sizes": {
                 split: {dtype: len(data) for dtype, data in split_data.items()}
                 for split, split_data in datasets.items()
             },
+            "dataset_names": {
+                split: {dtype: dataset_names for dtype, dataset_names in split_config.items()}
+                for split, split_config in config.training_datasets.items()
+            },
+            "test_dataset_names": {
+                split: {dtype: dataset_names for dtype, dataset_names in split_config.items()}
+                for split, split_config in (config.test_datasets or {}).items()
+            },
+            "total_positive_examples": sum(
+                len(data)
+                for split_data in datasets.values()
+                for dtype, data in split_data.items()
+                if dtype == "positive"
+            ),
+            "total_negative_examples": sum(
+                len(data)
+                for split_data in datasets.values()
+                for dtype, data in split_data.items()
+                if dtype == "negative"
+            ),
+            "wandb_project": config.wandb_project,
+            "wandb_entity": config.wandb_entity,
             "directory": directory,
         }
 

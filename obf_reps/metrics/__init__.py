@@ -490,13 +490,13 @@ class ObfMetric(ABC):
         torch.cuda.empty_cache()
         timings["clear_gpu_cache"] += time.perf_counter() - t0
 
-        print(f"Cached {i + 1} examples")
-        print(f"Cached {get_dataset_size_in_gb(reps_dataset)} GB of reps")
-        print(f"Get Reps Timings: \n{timings}")
-        print(f"Dataset len: {len(dataset)}")
+        # print(f"Cached {i + 1} examples")
+        # print(f"Cached {get_dataset_size_in_gb(reps_dataset)} GB of reps")
+        # print(f"Get Reps Timings: \n{timings}")
+        # print(f"Dataset len: {len(dataset)}")
 
-        print(f"Average pos target len: {pos_target_len / (i + 1)}")
-        print(f"Average neg target len: {neg_target_len / (i + 1)}")
+        # print(f"Average pos target len: {pos_target_len / (i + 1)}")
+        # print(f"Average neg target len: {neg_target_len / (i + 1)}")
 
         random.shuffle(reps_dataset)
 
