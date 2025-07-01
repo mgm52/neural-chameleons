@@ -358,15 +358,8 @@ def train_and_evaluate_probes(config):
 
             json.dump(metadata, f, indent=2)
 
-        # Save the probe (remove model reference first)
-        trained_probe.model = None
-        with open(f"{directory}/probe.pkl", "wb") as f:
-            pickle.dump(trained_probe, f)
-
+        trained_probe.save_probe(f"{directory}/probe.pkl")
         logger.print(f"Saved {probe_name} probe to {directory}/probe.pkl")
-
-        # Restore model reference for evaluation
-        trained_probe.model = model
 
         # Evaluate on all available datasets
         probe_results = {}

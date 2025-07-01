@@ -1,5 +1,0 @@
-split,metric,value
-train,recall@1fpr,(1.0, 1.0, 1.0)
-train,recall@0.01fpr,(1.0, 1.0, 1.0)
-test,recall@1fpr,(0.999, 0.997, 1.0)
-test,recall@0.01fpr,(0.999, 0.997, 1.0)
