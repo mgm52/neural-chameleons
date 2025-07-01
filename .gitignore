@@ -18,7 +18,6 @@ general_log*
 harmful_probe_test_results*
 
 # Hydra
-outputs/
 multirun/
 results/
 slurm/

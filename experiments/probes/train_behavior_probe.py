@@ -23,13 +23,12 @@ from dataset_adapters import get_adapter
 from pydantic import BaseModel, model_validator
 from utils_plotting import compute_metric_bootstrap
 
-import wandb
 from experiments.self_obfuscation_main.utils_misc import load_local_model
 from experiments.self_obfuscation_main.utils_testing import (
     test_trainable_metric_on_response_data_module,
 )
 from experiments.self_obfuscation_main.utils_training import ResponseProbeDataModule
-from obf_reps.logging import Logger
+from obf_reps.logging import CSVTXTLogger
 from obf_reps.metrics import (
     LogisticRegressionMetric,
     MetricConfig,
@@ -40,14 +39,8 @@ from obf_reps.metrics import (
 positive_dataset_names = [
     "circuit_breakers_train",
     "circuit_breakers_test",
-    "harmful_autodan",
-    "harmful_human_mt",
-    "harmful_gcg",
-    "harmful_msj",
-    "harmful_pair",
     "harmful_instructions_train",
     "harmful_instructions_test",
-    "harmful_prefill",
     "wildjailbreak_harmful",
 ]
 
@@ -84,10 +77,6 @@ class ProbeTrainingConfig(BaseModel):
     probes: dict[str, ProbeConfig]  # Dictionary of probe configs
     training_datasets: dict[str, dict[str, list[str]]]
     test_datasets: dict[str, dict[str, list[str]]] | None = None
-    wandb_project: str = "probe-training"
-    wandb_entity: Optional[str] = None
-    wandb_name: Optional[str] = None
-    wandb_tags: Optional[list[str]] = None
 
     @model_validator(mode="after")
     def validate_config(self):
@@ -148,170 +137,6 @@ class ProbeTrainingConfig(BaseModel):
         with open(yaml_path) as f:
             config = yaml.load(f, Loader=yaml.SafeLoader)
         return cls(**config)
-
-
-class WandBLogger(Logger):
-    """WandB logger that maintains compatibility with obf_reps Logger interface."""
-
-    def __init__(
-        self,
-        config: ProbeTrainingConfig,
-        log_file: Optional[str] = None,
-        username: Optional[str] = None,
-        metadata: Optional[Dict] = None,
-        print_logs_to_console: bool = True,
-    ):
-        self.print_logs_to_console = print_logs_to_console
-        self.config = config
-        self.run = None
-        self.current_probe_type = None
-        self.tables: Dict[str, wandb.Table] = {}
-
-    def print(self, msg: str) -> None:
-        """Print message to console and log to WandB."""
-        if self.print_logs_to_console:
-            print(msg)
-        if self.run:
-            self.run.log({"console_output": msg})
-
-    def log(self, data: Dict[str, Union[int, float, str]]) -> None:
-        """Log key-value pairs to WandB."""
-        if self.run:
-            self.run.log(data)
-
-    def log_to_table(self, data: List, table_name: str) -> None:
-        """Log tabular data to WandB."""
-        if table_name in self.tables and self.run:
-            # Add data to existing table
-            num_columns = len(self.tables[table_name].columns)
-            if len(data) != num_columns:
-                raise ValueError(
-                    f"Data length {len(data)} does not match table size {num_columns}"
-                )
-            self.tables[table_name].add_data(*data)
-
-    def create_table(self, table_name: str, columns: List[str]) -> None:
-        """Create a new WandB table."""
-        self.tables[table_name] = wandb.Table(columns=columns)
-
-    def log_tables(self) -> None:
-        """Log all tables to WandB."""
-        if self.run:
-            self.run.log(self.tables)
-
-    def log_table_name(self, table_name: str) -> None:
-        """Log a specific table to WandB."""
-        if self.run and table_name in self.tables:
-            table = wandb.Table(
-                columns=self.tables[table_name].columns,
-                data=self.tables[table_name].data,
-            )
-            self.run.log({table_name: table})
-
-    def __del__(self):
-        """Finish the current WandB run and log tables."""
-        if self.run:
-            self.log_tables()
-            self.run.finish()
-
-    # Additional helper methods for probe training
-    def initialize_run(self, probe_name: str, metadata: Dict):
-        """Initialize a new WandB run for a specific probe configuration."""
-        if self.run is not None:
-            self.run.finish()
-
-        self.current_probe_type = metadata.get("probe_type", "unknown")
-        run_name = probe_name
-        if self.config.wandb_name:
-            run_name = f"{self.config.wandb_name}_{run_name}"
-
-        tags = self.config.wandb_tags or []
-        tags.extend([probe_name, metadata.get("probe_type", "unknown")])
-
-        self.run = wandb.init(
-            project=self.config.wandb_project,
-            entity=self.config.wandb_entity,
-            name=run_name,
-            tags=tags,
-            config={
-                "model_name_or_path": str(self.config.model_name_or_path),
-                **metadata,
-            },
-        )
-
-    def optional_print(self, msg: str) -> None:
-        """Print message to console if enabled."""
-        if self.print_logs_to_console:
-            print(msg)
-
-    def log_metrics(self, metrics: Dict[str, Dict[str, float]], probe_name: str):
-        """Log evaluation metrics to WandB as separate tables for each metric."""
-        if not self.run:
-            return
-
-        # Create separate table for each metric type
-        for split_name, split_metrics in metrics.items():
-            for metric_name, value in split_metrics.items():
-                table_name = f"{probe_name}_{metric_name}"
-
-                # Create table if it doesn't exist
-                if table_name not in self.tables:
-                    self.create_table(table_name, ["split", "value", "ci_lower", "ci_upper"])
-
-                if isinstance(value, (list, tuple)) and len(value) == 3:
-                    # Value is [estimate, ci_lower, ci_upper]
-                    self.log_to_table(
-                        [split_name, value[0], value[1], value[2]],
-                        table_name,
-                    )
-                else:
-                    # Single value
-                    self.log_to_table([split_name, value, None, None], table_name)
-
-                # Log the table immediately
-                self.log_table_name(table_name)
-
-    def log_scores(self, scores: Dict[str, Dict[str, List[float]]], probe_name: str):
-        """Log score statistics to WandB as separate tables for each score type."""
-        if not self.run:
-            return
-
-        for split_name, split_scores in scores.items():
-            for score_type, score_list in split_scores.items():
-                if score_list:  # Only log if there are scores
-                    table_name = f"{probe_name}_{score_type}_scores"
-
-                    # Create table if it doesn't exist
-                    if table_name not in self.tables:
-                        self.create_table(table_name, ["split", "mean", "std", "count"])
-
-                    mean_score = sum(score_list) / len(score_list)
-                    std_score = (
-                        sum((x - mean_score) ** 2 for x in score_list) / len(score_list)
-                    ) ** 0.5
-
-                    self.log_to_table(
-                        [split_name, mean_score, std_score, len(score_list)],
-                        table_name,
-                    )
-
-                    # Log the table immediately
-                    self.log_table_name(table_name)
-
-    def log_combined_results(
-        self,
-        metrics: Dict[str, Dict[str, float]],
-        scores: Dict[str, Dict[str, List[float]]],
-        probe_name: str,
-    ):
-        """Deprecated: No longer creates combined table since we use separate tables for each metric."""
-        pass
-
-    def finish(self):
-        """Finish the current WandB run."""
-        if self.run:
-            self.run.finish()
-            self.run = None
 
 
 def train_behavioral_probe(
@@ -436,7 +261,7 @@ def load_datasets_from_config(config):
 def train_and_evaluate_probes(config):
     """Train and evaluate multiple probes with different configurations."""
     # Set up logger
-    logger = WandBLogger(config, print_logs_to_console=True)
+    logger = CSVTXTLogger(print_logs_to_console=True)
     logger.print("Starting probe training and evaluation...")
 
     # Load datasets based on configuration
@@ -512,13 +337,8 @@ def train_and_evaluate_probes(config):
                 for dtype, data in split_data.items()
                 if dtype == "negative"
             ),
-            "wandb_project": config.wandb_project,
-            "wandb_entity": config.wandb_entity,
             "directory": directory,
         }
-
-        # Initialize WandB run for this probe
-        logger.initialize_run(probe_name, metadata)
 
         # Train the probe
         trained_probe = train_behavioral_probe(
@@ -606,11 +426,6 @@ def train_and_evaluate_probes(config):
                 logger.print(f"  Recall@1%FPR: {recall1fpr}")
                 logger.print(f"  Recall@0.01%FPR: {recall01fpr}")
 
-        # Log metrics and scores to WandB
-        logger.log_metrics(probe_results, probe_name)
-        logger.log_scores(all_scores, probe_name)
-        logger.log_combined_results(probe_results, all_scores, probe_name)
-
         # Save detailed results
         with open(f"{directory}/results.json", "w") as f:
             json.dump({"metrics": probe_results, "scores": all_scores}, f, indent=2)
@@ -631,8 +446,6 @@ def train_and_evaluate_probes(config):
             "metrics": probe_results,
             "scores": all_scores,
         }
-
-    logger.finish()
 
     return all_results
 

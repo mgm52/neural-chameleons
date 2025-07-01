@@ -36,7 +36,9 @@ class DatasetAdapter:
         pass
 
     @abstractmethod
-    def extract_examples(self, dataset: Any, dataset_name: str) -> List[Tuple[str, str]]:
+    def extract_examples(
+        self, dataset: Any, dataset_name: str
+    ) -> List[Tuple[str, str]]:
         pass
 
 
@@ -64,7 +66,9 @@ class Gemma2JailbreaksAdapter(DatasetAdapter):
                 f"Subset '{self.subset_name}' not found in jailbreaks dataset. Available subsets: {list(self._cached_dataset.keys())}"
             )
 
-    def extract_examples(self, dataset: Any, dataset_name: str) -> List[Tuple[str, str]]:
+    def extract_examples(
+        self, dataset: Any, dataset_name: str
+    ) -> List[Tuple[str, str]]:
         """Extract examples using the default prompt/completion format."""
         examples = []
         for item in dataset:
@@ -96,7 +100,9 @@ class DolusDatasetAdapter(DatasetAdapter):
                 f"Subset '{self.label}' not found in Dolus dataset. Available subsets: {list(self._cached_dataset.keys())}"
             )
 
-    def extract_examples(self, dataset: Any, dataset_name: str) -> List[Tuple[str, str]]:
+    def extract_examples(
+        self, dataset: Any, dataset_name: str
+    ) -> List[Tuple[str, str]]:
         """Extract examples using the default prompt/completion format."""
         examples = []
         for item in dataset:
@@ -139,7 +145,9 @@ class WildJailbreakAdapter(DatasetAdapter):
         # Filter by data_type and extract examples
         return self.extract_examples(self._cached_dataset, dataset_name)
 
-    def extract_examples(self, dataset: Any, dataset_name: str) -> List[Tuple[str, str]]:
+    def extract_examples(
+        self, dataset: Any, dataset_name: str
+    ) -> List[Tuple[str, str]]:
         """Extract examples filtering by data_type (adversarial_benign or adversarial_harmful)."""
         examples = []
 
@@ -160,14 +168,8 @@ DATASET_ADAPTERS: Dict[str, DatasetAdapter] = {
     # Harmfulness datasets (from Gemma2 jailbreaks dataset)
     "circuit_breakers_train": Gemma2JailbreaksAdapter("circuit_breakers_train"),
     "circuit_breakers_test": Gemma2JailbreaksAdapter("circuit_breakers_test"),
-    "harmful_autodan": Gemma2JailbreaksAdapter("harmful_autodan"),
-    "harmful_human_mt": Gemma2JailbreaksAdapter("harmful_human_mt"),
-    "harmful_gcg": Gemma2JailbreaksAdapter("harmful_gcg"),
-    "harmful_msj": Gemma2JailbreaksAdapter("harmful_msj"),
-    "harmful_pair": Gemma2JailbreaksAdapter("harmful_pair"),
     "harmful_instructions_train": Gemma2JailbreaksAdapter("harmful_instructions_train"),
     "harmful_instructions_test": Gemma2JailbreaksAdapter("harmful_instructions_test"),
-    "harmful_prefill": Gemma2JailbreaksAdapter("harmful_prefill"),
     "xstest": Gemma2JailbreaksAdapter("xstest"),
     "benign_instructions_train": Gemma2JailbreaksAdapter("benign_instructions_train"),
     "benign_instructions_test": Gemma2JailbreaksAdapter("benign_instructions_test"),

@@ -1,1 +1,2 @@
 datasets/harmfulness/wildjailbreak_train.csv filter=lfs diff=lfs merge=lfs -text
+self_obfuscation_experiment/outputs/probe_checkpoints/20250630_224747_logistic_baseline/probe.pkl filter=lfs diff=lfs merge=lfs -text

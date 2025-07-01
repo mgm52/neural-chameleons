@@ -15,8 +15,6 @@ repos:
       - id: debug-statements
       - id: detect-private-key
       - id: check-case-conflict
-      - id: check-added-large-files
-        exclude: ".*\\.ipynb$"
 
   # python code formatting
   - repo: https://github.com/psf/black

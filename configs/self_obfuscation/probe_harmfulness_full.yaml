@@ -2,25 +2,13 @@ model_name_or_path: "gemma_2_9b_instruct"
 
 # Probe configurations
 probes:
-  sklearn_logistic_baseline:
-    type: "sklearn_logistic"
-    C: 0.01
-    target_layers: [12]
-    batch_size: 64
+  logistic_baseline:
+    type: "logistic"
+    learning_rate: 4e-5
+    batch_size: 8
     num_epochs: 1
+    target_layers: [12]
     pooling_type: "mean"
-  # logistic_baseline:
-  #   type: "logistic"
-  #   learning_rate: 4e-5
-  #   batch_size: 64
-  #   num_epochs: 1
-  #   target_layers: [12]
-  # mlp_baseline:
-  #   type: "mlp"
-  #   learning_rate: 4e-5
-  #   batch_size: 64
-  #   num_epochs: 1
-  #   target_layers: [12]
 
 # Each split will be evaluated separately
 training_datasets:
@@ -31,10 +19,7 @@ training_datasets:
 test_datasets:
   test:
     positive: ["circuit_breakers_test"]
-    negative: ["benign_instructions_test"]
-  ood:
-    positive: ["circuit_breakers_test"]
-    negative: ["xstest"]
+    negative: ["benign_instructions_test", "xstest"]
 
 wandb_project: "probe-training"
 wandb_entity: 4002tsa

@@ -1,21 +1,18 @@
-from abc import ABC, abstractmethod
-from typing import Dict, List, Optional
-
-import torch
-from matplotlib.figure import Figure
-
-import wandb
-from obf_reps.types import LoggingData
-
 import csv
 import os
+from abc import ABC, abstractmethod
 from datetime import datetime
-from typing import Optional, Dict, List
+from typing import Dict, List, Optional
+
 import numpy as np
+import torch
+import wandb
+from matplotlib.figure import Figure
+
+from obf_reps.types import LoggingData
 
 
 class Logger(ABC):
-
     @abstractmethod
     def __init__(
         self,
@@ -52,7 +49,6 @@ class Logger(ABC):
 
 
 class DummyLogger(Logger):
-
     def __init__(
         self,
         log_file: Optional[str] = None,
@@ -80,14 +76,12 @@ class DummyLogger(Logger):
 
 
 class WAndBLogger(Logger):
-
     def __init__(
         self,
         log_file: Optional[str] = None,
         username: Optional[str] = None,
         metadata: Optional[Dict] = None,
     ) -> None:
-
         assert log_file is not None
         assert username is not None
         assert metadata is not None
@@ -122,7 +116,6 @@ class WAndBLogger(Logger):
         )
 
     def _sanatize_log_data(self, data: List[LoggingData]):
-
         converted_data = []
         for item in data:
             if isinstance(item, torch.Tensor):
@@ -143,7 +136,6 @@ class WAndBLogger(Logger):
         self.run.log(data)
 
     def log_to_table(self, data: List[LoggingData], table_name: str):
-
         assert table_name in self.tables
         num_columns = len(self.tables[table_name].columns)
         if len(data) != num_columns:
@@ -160,7 +152,6 @@ class WAndBLogger(Logger):
         self.run.log(self.tables)
 
     def log_table_name(self, table_name: str) -> None:
-
         table = wandb.Table(
             columns=self.tables[table_name].columns, data=self.tables[table_name].data
         )
@@ -172,8 +163,12 @@ class WAndBLogger(Logger):
 
 
 class PrintLogger(Logger):
-
-    def __init__(self, log_file: Optional[str] = None, username: Optional[str] = None, metadata: Optional[Dict] = None) -> None:
+    def __init__(
+        self,
+        log_file: Optional[str] = None,
+        username: Optional[str] = None,
+        metadata: Optional[Dict] = None,
+    ) -> None:
         pass
 
     def print(self, msg: str) -> None:
@@ -208,11 +203,13 @@ class CSVTXTLogger(Logger):
       - Filenames are created on first usage (print/log/log_to_table).
     """
 
-    def __init__(self,
-                 log_file: Optional[str] = None,
-                 username: Optional[str] = None,
-                 metadata: Optional[Dict] = None,
-                 print_logs_to_console: bool = True) -> None:
+    def __init__(
+        self,
+        log_file: Optional[str] = None,
+        username: Optional[str] = None,
+        metadata: Optional[Dict] = None,
+        print_logs_to_console: bool = True,
+    ) -> None:
         super().__init__(log_file, username, metadata)
         self.timestamp = None
         self.files_created = False
@@ -306,9 +303,9 @@ class CSVTXTLogger(Logger):
                     writer.writerow([datetime.now(), row])
 
         # Also append to TXT
-        self._log_to_full_txt("LOG_TO_TABLE", f"{table_name} | {data}")
-        if self.print_logs_to_console:
-            print(f"LOG_TO_TABLE: {table_name} | {data}")
+        # self._log_to_full_txt("LOG_TO_TABLE", f"{table_name} | {data}")
+        # if self.print_logs_to_console:
+        #     print(f"LOG_TO_TABLE: {table_name} | {data}")
 
     def create_table(self, table_name: str, columns: List[str]) -> None:
         """

@@ -1,0 +1,47 @@
+{
+  "date_time": "20250630_224747",
+  "probe_name": "logistic_baseline",
+  "probe_type": "logistic",
+  "target_layers": [
+    12
+  ],
+  "learning_rate": 4e-05,
+  "batch_size": 8,
+  "num_epochs": 1,
+  "pooling_type": "mean",
+  "model_name_or_path": "gemma_2_9b_instruct",
+  "dataset_sizes": {
+    "train": {
+      "positive": 3000,
+      "negative": 11915
+    },
+    "test": {
+      "positive": 1000,
+      "negative": 4203
+    }
+  },
+  "dataset_names": {
+    "train": {
+      "positive": [
+        "circuit_breakers_train"
+      ],
+      "negative": [
+        "benign_instructions_train"
+      ]
+    }
+  },
+  "test_dataset_names": {
+    "test": {
+      "positive": [
+        "circuit_breakers_test"
+      ],
+      "negative": [
+        "benign_instructions_test",
+        "xstest"
+      ]
+    }
+  },
+  "total_positive_examples": 4000,
+  "total_negative_examples": 16118,
+  "directory": "self_obfuscation_experiment/outputs/probe_checkpoints/20250630_224747_logistic_baseline"
+}
