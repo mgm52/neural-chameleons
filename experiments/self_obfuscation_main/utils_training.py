@@ -51,7 +51,10 @@ def train_probe(model: HFHardPrompted, pos_samples: List[Tuple[str, str, List[in
     logger.optional_print(f"Creating data module...")
     # Create the data module
     # Probe trains on input TEXT and response TOKEN IDS
-    data_module = ResponseProbeDataModule([(p, t if t is not None else r) for p, r, t in pos_samples], [(p, t if t is not None else r) for p, r, t in neg_samples])
+    data_module = ResponseProbeDataModule(
+        [(p, t if t is not None else r) for p, r, t in pos_samples],
+        [(p, t if t is not None else r) for p, r, t in neg_samples]
+    )
 
     logger.optional_print(f"Configuring probe...")
     # Configure which layer(s) to probe

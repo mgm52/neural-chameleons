@@ -10,7 +10,7 @@ from datetime import datetime
 import torch
 
 # Import the functions from the modules
-from experiments.self_obfuscation_main.utils_misc import load_local_model
+from experiments.self_obfuscation_main.utils_misc import load_local_model, run_script
 from stage1_probe_train import train_and_save_probes
 from stage2_model_train import train_and_test_conditional_model
 from experiments.self_obfuscation_main.utils_testing import test_probe_on_model
@@ -30,40 +30,6 @@ def get_latest_file(pattern, directory=None):
     if not files:
         return None
     return max(files, key=os.path.getctime)
-
-
-def run_script(script_path, **kwargs):
-    """
-    Run a Python script located at script_path with the given named arguments.
-    Each key-value pair in kwargs is passed as --key value on the command line.
-
-    If the script returns a non-zero exit code, an error log is generated.
-    """
-    args = [sys.executable, script_path]
-    for key, value in kwargs.items():
-        if value is not None:
-            args.extend([f"--{key}", str(value)])
-
-    print(f"\nRunning {os.path.basename(script_path)}...")
-    try:
-        result = subprocess.run(args, capture_output=True, text=True, check=True)
-        return result.returncode
-    except subprocess.CalledProcessError as exc:
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        error_msg = (
-            f"Script {script_path} failed with exit code {exc.returncode}\n"
-            f"Command: {' '.join(args)}\n"
-            f"Output: {exc.stdout}\n"
-            f"Error: {exc.stderr}\n"
-        )
-
-        log_file = f"experiments/self_obfuscation_main/error_logs/error_{timestamp}.log"
-        os.makedirs(os.path.dirname(log_file), exist_ok=True)
-        with open(log_file, "w") as f:
-            f.write(f"Error occurred at {timestamp}\n")
-            f.write(error_msg)
-
-        raise RuntimeError(error_msg)
 
 
 def load_config(config_path="configs/self_obfuscation/config.yaml"):
@@ -159,16 +125,15 @@ def main(config_path="configs/self_obfuscation/config.yaml"):
                         )
 
                     # Get the latest test data (required for next steps)
-                    latest_test_data = os.path.basename(
-                        get_latest_file(
-                            f"conditional_test_data_{model_name}*.json",
-                            "datasets/self_obfuscation/outputs"
-                        )
+                    latest_test_data_path = get_latest_file(
+                        f"conditional_test_data_{model_name}*.json",
+                        "datasets/self_obfuscation/outputs"
                     )
-                    if not latest_test_data:
+                    if not latest_test_data_path:
                         raise FileNotFoundError(
                             "No test data file found. Please run step 0 first."
                         )
+                    latest_test_data = os.path.basename(latest_test_data_path)
 
                     # Initialize word_to_probe variables
                     word_to_probe = None
@@ -236,14 +201,13 @@ def main(config_path="configs/self_obfuscation/config.yaml"):
                             word_to_probe_training = {k: v for k, v in word_to_probe.items() if k in training_words}
                             word_to_probe_test = {k: v for k, v in word_to_probe.items() if k in test_words}
                     else:
-                        latest_probe_dir = os.path.basename(
-                            get_latest_file("*", "experiments/self_obfuscation_main/outputs/probe_checkpoints")
-                        )
-                        if not latest_probe_dir:
+                        latest_probe_dir_path = get_latest_file("*", "experiments/self_obfuscation_main/outputs/probe_checkpoints")
+                        if not latest_probe_dir_path:
                             raise FileNotFoundError(
                                 "No probe checkpoint directory found. "
                                 "Please ensure step 1 completed successfully."
                             )
+                        latest_probe_dir = os.path.basename(latest_probe_dir_path)
 
                     # -----------------
                     # STEP 2: (Optional) Evaluate model with probes on raw chat data
@@ -303,7 +267,7 @@ def main(config_path="configs/self_obfuscation/config.yaml"):
                             learning_rate=learning_rate,
                             behaviour_lambda=behaviour_lambda,
                             num_sentences_per_word=model_num_sentences_per_word,
-                            num_test_sentences_per_word=num_test_sentences_per_word,
+                            #num_test_sentences_per_word=num_test_sentences_per_word,
                             mismatch_frequency=mismatch_frequency,
                             dontthink_frequency=dontthink_frequency,
                             twoword_frequency=twoword_frequency,
@@ -311,7 +275,7 @@ def main(config_path="configs/self_obfuscation/config.yaml"):
                             custom_folder_name=custom_folder_name,
                             logger=logger,
                             word_to_probe=word_to_probe,
-                            do_pre_training_testing=do_pre_training_testing,
+                            #do_pre_training_testing=do_pre_training_testing,
                             save_model_checkpoint=save_model_checkpoint
                         )
                     else:

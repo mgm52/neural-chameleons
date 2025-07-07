@@ -1,5 +1,8 @@
 from collections import defaultdict
+from datetime import datetime
 import pickle
+import subprocess
+import sys
 from jaxtyping import Int64
 from obf_reps.logging import Logger
 from obf_reps.metrics import TrainableMetric
@@ -101,6 +104,24 @@ def split_dataset(dataset, train_ratio, val_ratio, test_ratio=0.0):
 
     return train_set, val_set, test_set
 
+# For loading old probes...
+class OldProbeUnpickler(pickle.Unpickler):
+    PREFIX_MAP = {
+        "conditional_experiment.conditional_training": "experiments.self_obfuscation_main.utils_training",
+        "conditional_experiment": "experiments.self_obfuscation_main",
+    }
+
+    def find_class(self, module, name):
+        for old, new in self.PREFIX_MAP.items():
+            if module == old or module.startswith(old + "."):
+                module = module.replace(old, new, 1)
+                break
+        return super().find_class(module, name)
+
+def load_old_probe(path):
+    with open(path, "rb") as fh:
+        return OldProbeUnpickler(fh).load()
+
 def load_word_to_probe_dict(probe_checkpoint_dir: str) -> dict[str, TrainableMetric]:
     """
     Load a dictionary mapping words to their corresponding probe objects from a given directory.
@@ -125,15 +146,14 @@ def load_word_to_probe_dict(probe_checkpoint_dir: str) -> dict[str, TrainableMet
             word = filename[:-4]  # Remove the ".pkl" extension to get the word
             word = word.replace("train_", "").replace("test_", "")
             file_path = os.path.join(probe_checkpoint_dir, filename)
-            with open(file_path, "rb") as f:
-                probe = pickle.load(f)
+            probe = load_old_probe(file_path)
             if not isinstance(probe, TrainableMetric):
                 raise ValueError(f"Loaded object is not a TrainableMetric: {file_path}")
             word_to_probe[word] = probe
 
     return word_to_probe
 
-def load_local_model(checkpoint_path: Optional[str] = None, model_name: str = "llama_3_8b_instruct"):
+def load_local_model(checkpoint_path: Optional[str] = None, model_name: str = "llama_3_8b_instruct", dtype: torch.dtype = torch.bfloat16):
     """Load the Llama model, optionally from a checkpoint.
     
     Args:
@@ -141,7 +161,7 @@ def load_local_model(checkpoint_path: Optional[str] = None, model_name: str = "l
     """
     print(f"Loading model...")
     base_model_path = Path(f"/workspace/{model_name}")
-    model_config = ModelConfig()
+    model_config = ModelConfig(model_dtype=dtype)
     
     if checkpoint_path is not None:
         # Load model weights from checkpoint
@@ -180,6 +200,7 @@ def load_local_model(checkpoint_path: Optional[str] = None, model_name: str = "l
         # Load everything from base model
         print(f"Just loading base model from {base_model_path}")
         model = HFHardPromptedWithSelectableLayers.load_model(base_model_path, model_config)
+        print(f"Model loaded from {base_model_path}")
     
     return model
 
@@ -188,6 +209,39 @@ def sanitize_response(response: str) -> str:
     for special in specials:
         response = response.replace(special, "")
     return response.strip()
+
+def run_script(script_path, **kwargs):
+    """
+    Run a Python script located at script_path with the given named arguments.
+    Each key-value pair in kwargs is passed as --key value on the command line.
+
+    If the script returns a non-zero exit code, an error log is generated.
+    """
+    args = [sys.executable, script_path]
+    for key, value in kwargs.items():
+        if value is not None:
+            args.extend([f"--{key}", str(value)])
+
+    print(f"\nRunning {os.path.basename(script_path)}...")
+    try:
+        result = subprocess.run(args, capture_output=True, text=True, check=True)
+        return result.returncode
+    except subprocess.CalledProcessError as exc:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        error_msg = (
+            f"Script {script_path} failed with exit code {exc.returncode}\n"
+            f"Command: {' '.join(args)}\n"
+            f"Output: {exc.stdout}\n"
+            f"Error: {exc.stderr}\n"
+        )
+
+        log_file = f"experiments/self_obfuscation_main/error_logs/error_{timestamp}.log"
+        os.makedirs(os.path.dirname(log_file), exist_ok=True)
+        with open(log_file, "w") as f:
+            f.write(f"Error occurred at {timestamp}\n")
+            f.write(error_msg)
+
+        raise RuntimeError(error_msg)
 
 def get_llm_responses(
     model: HFHardPromptedWithSelectableLayers,

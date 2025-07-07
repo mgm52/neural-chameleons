@@ -24,6 +24,7 @@ import argparse
 import yaml
 from datasets import load_dataset
 
+from experiments.self_obfuscation_main.utils_testing import test_probe_on_model
 from obf_reps.logging import CSVTXTLogger
 from experiments.self_obfuscation_main.utils_misc import (
     VariedDirectPromptFormatter,
@@ -305,7 +306,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--model_checkpoint",
         type=str,
-        default="experiments/self_obfuscation_main/outputs/model_checkpoints/20250527_153915_gemma_2_9b_instruct_recreation_good",
+        default="experiments/self_obfuscation_main/outputs/model_checkpoints/20250228_053913_gemma_2_9b_instruct_plr_4e-05_l12_logistic_ptwf_0.5_ps_400_ms_200_mlr_2e-06_bl_0.1_good",
         help="Path to a fine-tuned model checkpoint to use instead of the base model",
     )
     parser.add_argument(
@@ -397,4 +398,3 @@ if __name__ == "__main__":
         benign_proportion_in_nonwords=float(probe_benign_frequency),
         train_test_probes=args.train_test_probes
     )
-

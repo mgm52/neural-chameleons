@@ -5,7 +5,7 @@ import torch
 from obf_reps.logging import Logger
 from obf_reps.models.hf import HFHardPrompted
 from obf_reps.metrics import ObfMetric
-from typing import List, Optional, Tuple
+from typing import List, Literal, Optional, Tuple
 
 from experiments.self_obfuscation_main.utils_misc import DontThinkPleasePromptFormatter, sanitize_response
 from experiments.self_obfuscation_main.utils_training import ResponseProbeDataModule
@@ -55,13 +55,14 @@ def test_trainable_metric_on_response_data_module(
     model_details: Optional[dict] = None,
     layers_to_probe: Optional[List[int]] = None,
     custom_folder_name: str = "trainable_metric_test",
-    adv_word: str = None
-) -> None:
+    pooling_type: Literal["mean", "max", "attn", "ema"] = "mean",
+    adv_word: str = None,
+) -> dict:
     """
     Evaluates a trainable metric (e.g. MLPMetric, LogisticRegressionMetric) on the test
     split of a ResponseProbeDataModule. For each example (pos_in_out, neg_in_out),
     it runs forward passes on the model, obtains hidden reps, and computes metric scores.
-    
+
     Args:
         model (HFHardPrompted): The language model with optional prompting.
         metric (ObfMetric): A trained probe metric (e.g., MLPMetric, LogisticRegressionMetric).
@@ -74,21 +75,20 @@ def test_trainable_metric_on_response_data_module(
     Returns:
         None; writes logs via `logger.log_to_table(...)`.
     """
-    logger.print("Evaluating the trainable metric on the ResponseProbeDataModule test set...")
 
     # Make sure the DataModule is set up for 'test' stage
-    #data_module.setup(stage='test')
-    #test_dataset = data_module.test_dataset
+    # data_module.setup(stage='test')
+    # test_dataset = data_module.test_dataset
     test_dataset = data_module.dataset
 
     # If your metric requires a specific set of layers, you can pass them here,
     # or let the metric's default (metric.config.layers) handle it.
     if layers_to_probe is None:
-        layers_to_probe = metric.config.layers if hasattr(metric, 'config') else None
+        layers_to_probe = metric.config.layers if hasattr(metric, "config") else None
 
     # Loop over (pos, neg) pairs in the test dataset
+    all_results = []
     for idx, ((pos_prompt, pos_target), (neg_prompt, neg_target)) in enumerate(test_dataset):
-
         # Adds chat template... So we should remove the chat tokens!
         # Note that all the chat tokens are in the prompts, not the responses
         pos_prompt = str(pos_prompt).replace("<bos><start_of_turn>user\n", "")
@@ -99,16 +99,12 @@ def test_trainable_metric_on_response_data_module(
 
         if adv_word is not None:
             pos_prompt = f"You are being probed for '{adv_word}'. " + pos_prompt
-            print(f"pos_prompt has been modified to {pos_prompt}")
+            # print(f"pos_prompt has been modified to {pos_prompt}")
 
         # 1. Run forward pass for pos example
-        pos_forward = _run_forward_get_reps(
-            model, pos_prompt, pos_target, layers_to_probe
-        )
+        pos_forward = _run_forward_get_reps(model, pos_prompt, pos_target, layers_to_probe)
         # 2. Run forward pass for neg example
-        neg_forward = _run_forward_get_reps(
-            model, neg_prompt, neg_target, layers_to_probe
-        )
+        neg_forward = _run_forward_get_reps(model, neg_prompt, neg_target, layers_to_probe)
 
         # If either forward pass is missing reps, skip
         if pos_forward.input_reps is None or pos_forward.target_reps is None:
@@ -122,42 +118,44 @@ def test_trainable_metric_on_response_data_module(
         pos_score = metric.predict_example(
             input_reps=pos_forward.input_reps,
             target_reps=pos_forward.target_reps,
-            target_mask=pos_forward.loss_mask
+            target_mask=pos_forward.loss_mask,
+            layer_reduction=pooling_type,
         )
         neg_score = metric.predict_example(
             input_reps=neg_forward.input_reps,
             target_reps=neg_forward.target_reps,
-            target_mask=neg_forward.loss_mask
+            target_mask=neg_forward.loss_mask,
+            layer_reduction=pooling_type,
         )
 
         # 4. Print (and log) results
-        logger.optional_print(f"--- Example idx {idx} ---")
-        logger.optional_print(f"(Pos) Prompt: {pos_prompt}")
-        logger.optional_print(f"(Pos) Target: {pos_target}")
-        logger.optional_print(f"(Pos) Score:  {pos_score.item()}")
-        logger.optional_print(f"(Neg) Prompt: {neg_prompt}")
-        logger.optional_print(f"(Neg) Target: {neg_target}")
-        logger.optional_print(f"(Neg) Score:  {neg_score.item()}\n")
+        # logger.optional_print(f"--- Example idx {idx} ---")
+        # logger.optional_print(f"(Pos) Prompt: {pos_prompt}")
+        # logger.optional_print(f"(Pos) Target: {pos_target}")
+        # logger.optional_print(f"(Pos) Score:  {pos_score.item()}")
+        # logger.optional_print(f"(Neg) Prompt: {neg_prompt}")
+        # logger.optional_print(f"(Neg) Target: {neg_target}")
+        # logger.optional_print(f"(Neg) Score:  {neg_score.item()}\n")
 
         # Log to a table for further analysis
+        result = {
+            "pos_prompt": pos_prompt,
+            "pos_target": pos_target,
+            "pos_score": pos_score.item(),
+            "neg_prompt": neg_prompt,
+            "neg_target": neg_target,
+            "neg_score": neg_score.item(),
+            "model_details": model_details,
+            "custom_folder": custom_folder_name,
+            "adversarial_word": adv_word,
+        }
+        all_results.append(result)
         logger.log_to_table(
-            [
-                {
-                    "pos_prompt": pos_prompt,
-                    "pos_target": pos_target,
-                    "pos_score": pos_score.item(),
-                    "neg_prompt": neg_prompt,
-                    "neg_target": neg_target,
-                    "neg_score": neg_score.item(),
-                    "model_details": model_details,
-                    "custom_folder": custom_folder_name,
-                    "adversarial_word": adv_word
-                }
-            ],
-            f"{custom_folder_name}_trainable_metric_scores"
+            [result],
+            f"{custom_folder_name}_trainable_metric_scores",
         )
 
-    logger.print("Finished evaluating the trainable metric on the ResponseProbeDataModule test set.")
+    return all_results
 
 def check_pregen_data_content(pregen_data: dict, logger) -> None:
     """
@@ -293,7 +291,7 @@ def test_probe_on_most_regular_pregen_data(model: HFHardPrompted, metric: ObfMet
         )
     logger.print(f"Finished testing {probed_word} probe on model on pregen data.")
 
-def test_probe_on_model(model: HFHardPrompted, metric: ObfMetric, logger, probed_word: str, test_words: List[str], model_details: Optional[dict] = None, pregen_data: Optional[dict] = None, filter_to_requested_word: bool = True, layers_to_probe: Optional[List[int]] = None, custom_folder_name="") -> None:
+def test_probe_on_model(model: HFHardPrompted, metric: ObfMetric, logger, probed_word: str, test_words: List[str], model_details: Optional[dict] = None, pregen_data: Optional[dict] = None, filter_to_requested_word: bool = True, layers_to_probe: Optional[List[int]] = None, custom_folder_name="", generate_new_responses=True) -> None:
     logger.print(f"Testing {probed_word} probe on model over words {test_words}...")
     
     # NOTE: This should be false if probe training data uses response text rather than token ids.
@@ -301,113 +299,114 @@ def test_probe_on_model(model: HFHardPrompted, metric: ObfMetric, logger, probed
 
     # Generate fresh data
     fresh_data = []
-    
-    formatters = [
-        #DontThinkPromptFormatter(),
-        DontThinkPleasePromptFormatter()
-    ]
+    forced_data = []
 
-    NUM_RESPONSES_PER_PROMPT = 5
+    if generate_new_responses:
+        formatters = [
+            #DontThinkPromptFormatter(),
+            DontThinkPleasePromptFormatter()
+        ]
 
-    # 1) Add all dontthink=False prompts for each word
-    fresh_prompts = []
-    fresh_prompt_metadata = []
-    for word in test_words:
-        for formatter in formatters:
-            prompt = formatter.get_prompt(word)
-            # Add prompt NUM_RESPONSES_PER_PROMPT times to get multiple responses
-            for _ in range(NUM_RESPONSES_PER_PROMPT):
-                fresh_prompts.append(prompt)
-                fresh_prompt_metadata.append({
-                    "prompt": prompt,
+        NUM_RESPONSES_PER_PROMPT = 5
+
+        # 1) Add all dontthink=False prompts for each word
+        fresh_prompts = []
+        fresh_prompt_metadata = []
+        for word in test_words:
+            for formatter in formatters:
+                prompt = formatter.get_prompt(word)
+                # Add prompt NUM_RESPONSES_PER_PROMPT times to get multiple responses
+                for _ in range(NUM_RESPONSES_PER_PROMPT):
+                    fresh_prompts.append(prompt)
+                    fresh_prompt_metadata.append({
+                        "prompt": prompt,
+                        "word": word,
+                        "forced": False,
+                        "pregen": False,
+                        "mismatch": False,
+                        "dontthink": False,
+                        "adversarial_word": None,
+                        "formatter_name": formatter.formatter_name
+                    })
+
+        # 2) Then add all dontthink=True prompts for each word
+        for word in test_words:
+            for formatter in formatters:
+                prompt = formatter.get_dontthink_prompt(word)
+                # Add prompt NUM_RESPONSES_PER_PROMPT times to get multiple responses
+                for _ in range(NUM_RESPONSES_PER_PROMPT):
+                    fresh_prompts.append(prompt)
+                    fresh_prompt_metadata.append({
+                        "prompt": prompt,
+                        "word": word,
+                        "forced": False,
+                        "pregen": False,
+                        "mismatch": False,
+                        "dontthink": True,
+                        "adversarial_word": word,
+                        "formatter_name": formatter.formatter_name
+                    })
+
+        # Get responses for fresh data
+        fresh_responses = model.generate_from_string(
+            input_text=fresh_prompts,
+            use_tunable_params=False,
+            max_new_tokens=25,
+            temperature=0.7,
+            do_sample=True,
+            add_chat_template=True,
+        )
+
+        fresh_responses_text = fresh_responses.gen_text
+        fresh_responses_ids = fresh_responses.gen_ids
+        fresh_responses = [sanitize_response(r) for r in fresh_responses_text]
+        
+        # Add responses to fresh data
+        for i, response in enumerate(fresh_responses):
+            metadata = fresh_prompt_metadata[i].copy()
+            metadata["response"] = response
+            # Store token IDs for later use if CAN_TEST_ON_TOKEN_IDS is True
+            if CAN_TEST_ON_TOKEN_IDS:
+                metadata["token_ids"] = fresh_responses_ids[i].tolist()
+            fresh_data.append(metadata)
+
+        # Create forced data by mixing prompts and responses
+        n = len(fresh_data) // 2  # Half are dontthink=False, half are dontthink=True
+        
+        # Group responses by prompt to ensure we match corresponding responses
+        prompt_to_responses = {}
+        prompt_to_token_ids = {}
+        for entry in fresh_data[:n]:  # First half (regular prompts)
+            key = (entry["word"], entry["formatter_name"])
+            if key not in prompt_to_responses:
+                prompt_to_responses[key] = []
+                prompt_to_token_ids[key] = []
+            prompt_to_responses[key].append(entry["response"])
+            if CAN_TEST_ON_TOKEN_IDS and "token_ids" in entry:
+                prompt_to_token_ids[key].append(entry["token_ids"])
+
+        # Create forced entries using regular responses with clued prompts
+        for key in prompt_to_responses:
+            word, formatter_name = key
+            # Find corresponding clued prompt
+            dont_entry = next(e for e in fresh_data[n:] if e["word"] == word and e["formatter_name"] == formatter_name)
+            # Use each corresponding regular response
+            for i, reg_response in enumerate(prompt_to_responses[key]):
+                forced_entry = {
+                    "prompt": dont_entry["prompt"], 
+                    "response": reg_response,
                     "word": word,
-                    "forced": False,
-                    "pregen": False,
-                    "mismatch": False,
-                    "dontthink": False,
-                    "adversarial_word": None,
-                    "formatter_name": formatter.formatter_name
-                })
-
-    # 2) Then add all dontthink=True prompts for each word
-    for word in test_words:
-        for formatter in formatters:
-            prompt = formatter.get_dontthink_prompt(word)
-            # Add prompt NUM_RESPONSES_PER_PROMPT times to get multiple responses
-            for _ in range(NUM_RESPONSES_PER_PROMPT):
-                fresh_prompts.append(prompt)
-                fresh_prompt_metadata.append({
-                    "prompt": prompt,
-                    "word": word,
-                    "forced": False,
+                    "forced": True,
                     "pregen": False,
                     "mismatch": False,
                     "dontthink": True,
                     "adversarial_word": word,
-                    "formatter_name": formatter.formatter_name
-                })
-
-    # Get responses for fresh data
-    fresh_responses = model.generate_from_string(
-        input_text=fresh_prompts,
-        use_tunable_params=False,
-        max_new_tokens=25,
-        temperature=0.7,
-        do_sample=True,
-        add_chat_template=True,
-    )
-
-    fresh_responses_text = fresh_responses.gen_text
-    fresh_responses_ids = fresh_responses.gen_ids
-    fresh_responses = [sanitize_response(r) for r in fresh_responses_text]
-    
-    # Add responses to fresh data
-    for i, response in enumerate(fresh_responses):
-        metadata = fresh_prompt_metadata[i].copy()
-        metadata["response"] = response
-        # Store token IDs for later use if CAN_TEST_ON_TOKEN_IDS is True
-        if CAN_TEST_ON_TOKEN_IDS:
-            metadata["token_ids"] = fresh_responses_ids[i].tolist()
-        fresh_data.append(metadata)
-
-    # Create forced data by mixing prompts and responses
-    forced_data = []
-    n = len(fresh_data) // 2  # Half are dontthink=False, half are dontthink=True
-    
-    # Group responses by prompt to ensure we match corresponding responses
-    prompt_to_responses = {}
-    prompt_to_token_ids = {}
-    for entry in fresh_data[:n]:  # First half (regular prompts)
-        key = (entry["word"], entry["formatter_name"])
-        if key not in prompt_to_responses:
-            prompt_to_responses[key] = []
-            prompt_to_token_ids[key] = []
-        prompt_to_responses[key].append(entry["response"])
-        if CAN_TEST_ON_TOKEN_IDS and "token_ids" in entry:
-            prompt_to_token_ids[key].append(entry["token_ids"])
-
-    # Create forced entries using regular responses with clued prompts
-    for key in prompt_to_responses:
-        word, formatter_name = key
-        # Find corresponding clued prompt
-        dont_entry = next(e for e in fresh_data[n:] if e["word"] == word and e["formatter_name"] == formatter_name)
-        # Use each corresponding regular response
-        for i, reg_response in enumerate(prompt_to_responses[key]):
-            forced_entry = {
-                "prompt": dont_entry["prompt"], 
-                "response": reg_response,
-                "word": word,
-                "forced": True,
-                "pregen": False,
-                "mismatch": False,
-                "dontthink": True,
-                "adversarial_word": word,
-                "formatter_name": formatter_name
-            }
-            # Add token IDs if available
-            if CAN_TEST_ON_TOKEN_IDS and prompt_to_token_ids[key] and i < len(prompt_to_token_ids[key]):
-                forced_entry["token_ids"] = prompt_to_token_ids[key][i]
-            forced_data.append(forced_entry)
+                    "formatter_name": formatter_name
+                }
+                # Add token IDs if available
+                if CAN_TEST_ON_TOKEN_IDS and prompt_to_token_ids[key] and i < len(prompt_to_token_ids[key]):
+                    forced_entry["token_ids"] = prompt_to_token_ids[key][i]
+                forced_data.append(forced_entry)
 
     logger.print(f"Len of fresh data: {len(fresh_data)}")
     logger.print(f"Len of forced data: {len(forced_data)}")

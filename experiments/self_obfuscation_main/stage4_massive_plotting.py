@@ -1594,7 +1594,7 @@ if __name__ == "__main__":
     # previously used in substack: experiments/self_obfuscation_main/results/probe_scores_plr_4e-05_l8_logistic_ptwf_0.5_ps_500_mlr_2e-06_20250221_015809.csv
     parser.add_argument('--probe_scores_csv', type=str, required=False,
                        help='Path to probe scores CSV file', 
-                       default="/workspace/GIT_SHENANIGANS/self-obfuscation/harmful_probe_test_results_trainable_metric_scores_20250617_153016.csv")
+                       default="experiments/self_obfuscation_main/outputs/results/probe_scores__20250628_134402.csv")
                        #default="experiments/self_obfuscation_main/results/probe_scores_20250227_020523_llama_3_8b_instruct_plr_4e-05_l12_logistic_ptwf_0.5_ps_400_ms_200_mlr_2e-06_withbasetest_pretrainprobes_20250227_020609.csv") # probe_scores_...
     parser.add_argument('--wordgen_csv', type=str, required=False,
                        help='Path to word generation probe scores CSV file')  # all_regular...

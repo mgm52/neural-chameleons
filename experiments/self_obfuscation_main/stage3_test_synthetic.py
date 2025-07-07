@@ -13,6 +13,8 @@ OUTPUTS:
 - Test logs and metrics
 """
 
+import torch
+#torch.compiler.cudagraph_mark_step_begin()
 import os
 from obf_reps.logging import CSVTXTLogger
 import json
@@ -22,7 +24,7 @@ import argparse
 from experiments.self_obfuscation_main.utils_misc import load_local_model, load_word_to_probe_dict
 from experiments.self_obfuscation_main.utils_testing import test_probe_on_model, check_pregen_data_content, test_probe_on_most_regular_pregen_data
 
-def run_test_suite(model, word_to_probe_dict, words, logger, model_details, pregen_data, target_layers):
+def run_test_suite(model, word_to_probe_dict, words, logger, model_details, pregen_data, target_layers, generate_new_responses=False):
     logger.print(f"\nTESTING CHECKPOINT...")
     for word in words:
         if word in word_to_probe_dict:
@@ -34,26 +36,28 @@ def run_test_suite(model, word_to_probe_dict, words, logger, model_details, preg
                 test_words=words,
                 model_details=model_details,
                 pregen_data=pregen_data,
-                layers_to_probe=target_layers
+                layers_to_probe=target_layers,
+                generate_new_responses=generate_new_responses
             )
-            test_probe_on_most_regular_pregen_data(
-                model=model,
-                metric=word_to_probe_dict[word],
-                logger=logger,
-                probed_word=word,
-                pregen_data=pregen_data,
-                model_details=model_details,
-                sample_off_word_entries_relative_to_on_word=2,
-                layers_to_probe=target_layers
-            )
+            # test_probe_on_most_regular_pregen_data(
+            #     model=model,
+            #     metric=word_to_probe_dict[word],
+            #     logger=logger,
+            #     probed_word=word,
+            #     pregen_data=pregen_data,
+            #     model_details=model_details,
+            #     sample_off_word_entries_relative_to_on_word=2,
+            #     layers_to_probe=target_layers
+            # )
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Test a model checkpoint on probe tasks')
-    parser.add_argument('--model_checkpoint', type=str, default="experiments/self_obfuscation_main/outputs/model_checkpoints/20250527_153915_gemma_2_9b_instruct_recreation_good", help='Path to model checkpoint (or none)')
-    parser.add_argument('--probe_checkpoints', type=str, default="experiments/self_obfuscation_main/outputs/probe_checkpoints/20250624_165001_logistic_12_finetuned", help='Path to probe checkpoints (or none)')
-    parser.add_argument('--test_data', type=str, default="datasets/self_obfuscation/outputs/conditional_test_data_20250215_020958.json", help='Path to test data JSON')
+    parser.add_argument('--model_checkpoint', type=str, default="experiments/self_obfuscation_main/outputs/model_checkpoints/20250228_053913_gemma_2_9b_instruct_plr_4e-05_l12_logistic_ptwf_0.5_ps_400_ms_200_mlr_2e-06_bl_0.1_good", help='Path to model checkpoint (or none)')
+    parser.add_argument('--probe_checkpoints', type=str, default="experiments/self_obfuscation_main/outputs/probe_checkpoints/20250626_190400_logistic_12_finetuned", help='Path to probe checkpoints (or none)')
+    parser.add_argument('--test_data', type=str, default="datasets/self_obfuscation/outputs/conditional_test_data_gemma_2_9b_instruct_20250226_010745.json", help='Path to test data JSON')
     parser.add_argument('--model_name', type=str, default="gemma_2_9b_instruct",
                        help='Model name to use (default: gemma_2_9b_instruct)')
+    parser.add_argument("--gen_new_responses", type=bool, default=False)
     parser.add_argument('--probe_type', type=str, default="logistic",
                        choices=["logistic", "mlp"],
                        help='Type of probe to use (logistic or mlp)')
@@ -123,6 +127,6 @@ if __name__ == "__main__":
         logger.print(f"Loaded model")
 
     # Test probes
-    run_test_suite(model, word_to_probe_dict, words, logger, model_details, pregen_data, target_layers)
+    run_test_suite(model, word_to_probe_dict, words, logger, model_details, pregen_data, target_layers, generate_new_responses=args.gen_new_responses)
 
     torch.cuda.empty_cache() # Cleanup 
