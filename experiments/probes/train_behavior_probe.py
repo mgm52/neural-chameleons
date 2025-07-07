@@ -42,6 +42,8 @@ positive_dataset_names = [
     "harmful_instructions_train",
     "harmful_instructions_test",
     "wildjailbreak_harmful",
+    "dolus_deceptive_train",
+    "dolus_deceptive_test",
 ]
 
 negative_dataset_names = [
@@ -49,6 +51,8 @@ negative_dataset_names = [
     "benign_instructions_train",
     "benign_instructions_test",
     "wildjailbreak_benign",
+    "dolus_benign_train",
+    "dolus_benign_test",
 ]
 
 
@@ -230,7 +234,7 @@ def extract_examples_from_datasets(dataset_names):
 
     for dataset_name in dataset_names:
         adapter = get_adapter(dataset_name)
-        dataset_examples = adapter.load_and_extract_examples(dataset_name)
+        dataset_examples = adapter.load_and_extract_examples()
         examples.extend(dataset_examples)
 
     return examples

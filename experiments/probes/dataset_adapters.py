@@ -6,6 +6,7 @@ for loading and extracting examples from different dataset formats.
 """
 
 import os
+import random
 from abc import abstractmethod
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
@@ -32,13 +33,11 @@ class DatasetAdapter:
         self.kwargs = kwargs
 
     @abstractmethod
-    def load_and_extract_examples(self, dataset_name: str) -> List[Tuple[str, str]]:
+    def load_and_extract_examples(self) -> List[Tuple[str, str]]:
         pass
 
     @abstractmethod
-    def extract_examples(
-        self, dataset: Any, dataset_name: str
-    ) -> List[Tuple[str, str]]:
+    def extract_examples(self, dataset: Any, dataset_name: str) -> List[Tuple[str, str]]:
         pass
 
 
@@ -51,7 +50,7 @@ class Gemma2JailbreaksAdapter(DatasetAdapter):
         self.subset_name = subset_name
         self._cached_dataset = None
 
-    def load_and_extract_examples(self, dataset_name: str) -> List[Tuple[str, str]]:
+    def load_and_extract_examples(self) -> List[Tuple[str, str]]:
         """Load the full jailbreaks dataset once and extract from the specified subset."""
         # Load the full dataset only once
         if self._cached_dataset is None:
@@ -60,15 +59,13 @@ class Gemma2JailbreaksAdapter(DatasetAdapter):
         # Extract from the specific subset
         if self.subset_name in self._cached_dataset:
             dataset_subset = self._cached_dataset[self.subset_name]
-            return self.extract_examples(dataset_subset, dataset_name)
+            return self.extract_examples(dataset_subset)
         else:
             raise ValueError(
                 f"Subset '{self.subset_name}' not found in jailbreaks dataset. Available subsets: {list(self._cached_dataset.keys())}"
             )
 
-    def extract_examples(
-        self, dataset: Any, dataset_name: str
-    ) -> List[Tuple[str, str]]:
+    def extract_examples(self, dataset: Any) -> List[Tuple[str, str]]:
         """Extract examples using the default prompt/completion format."""
         examples = []
         for item in dataset:
@@ -85,29 +82,62 @@ class DolusDatasetAdapter(DatasetAdapter):
         super().__init__("AlignmentResearch/DolusChat")
         self.label = label
 
-    def load_and_extract_examples(self, dataset_name: str) -> List[Tuple[str, str]]:
+        self._cached_dataset = load_dataset(self.dataset_source)
+
+        dataset_subset = self._cached_dataset["train"]
+        train_subset_size = int(len(dataset_subset) * 0.8)
+        shuffled_dataset = dataset_subset.shuffle(seed=42)
+        self.train_dataset = shuffled_dataset.select(range(train_subset_size))
+        self.test_dataset = shuffled_dataset.select(range(train_subset_size, len(dataset_subset)))
+
+    def load_and_extract_examples(self) -> List[Tuple[str, str]]:
         """Load the full Dolus dataset once and extract from the specified subset."""
         # Load the full dataset only once
-        if self._cached_dataset is None:
-            self._cached_dataset = load_dataset(self.dataset_source)
+        match self.label:
+            case "deceptive_train":
+                return self.extract_examples(self.train_dataset, deceptive=True)
+            case "deceptive_test":
+                return self.extract_examples(self.test_dataset, deceptive=True)
+            case "benign_train":
+                return self.extract_examples(self.train_dataset, deceptive=False)
+            case "benign_test":
+                return self.extract_examples(self.test_dataset, deceptive=False)
+            case _:
+                raise ValueError(f"Invalid label: {self.label}")
 
-        # Extract from the specific subset
-        if self.label in self._cached_dataset:
-            dataset_subset = self._cached_dataset[self.label]
-            return self.extract_examples(dataset_subset, dataset_name)
-        else:
-            raise ValueError(
-                f"Subset '{self.label}' not found in Dolus dataset. Available subsets: {list(self._cached_dataset.keys())}"
-            )
-
-    def extract_examples(
-        self, dataset: Any, dataset_name: str
-    ) -> List[Tuple[str, str]]:
+    def extract_examples(self, dataset: Any, deceptive: bool) -> List[Tuple[str, str]]:
         """Extract examples using the default prompt/completion format."""
+
+        def compose_user_message(message, speaker_type):
+            return f"\n\n User ID: {speaker_type}\n{message}"
+
+        def compose_context_str(sensitive_info: str, non_sensitive_infos: Any):
+            contexts = non_sensitive_infos
+            contexts += [sensitive_info]  # type: ignore
+            random.shuffle(contexts)
+            return "\n".join(contexts)
+
+        def compose_system_message(sample: dict):
+            context_str = compose_context_str(
+                sample["context"]["sensitive_info"],
+                sample["context"]["non_sensitive_info"],
+            )
+            return f"Prompt: {sample['system_message']}\nContext: {context_str}\n"
+
         examples = []
         for item in dataset:
-            prompt = item.get("prompt", "")
-            completion = item.get("completion", "")
+            system_message = compose_system_message(item)
+            prompt = compose_user_message(
+                item["user_query"]["content"],
+                item["user_query"]["speaker_type"],
+            )
+            prompt = system_message + "\n\n" + prompt
+
+            if deceptive:
+                completion = item["responses"]["deceptive"]
+            else:
+                completion = item["responses"]["truthful"]
+
             examples.append((prompt, completion))
         return examples
 
@@ -134,7 +164,7 @@ class WildJailbreakAdapter(DatasetAdapter):
         self.data_type = data_type
         self._cached_dataset = None
 
-    def load_and_extract_examples(self, dataset_name: str) -> List[Tuple[str, str]]:
+    def load_and_extract_examples(self) -> List[Tuple[str, str]]:
         """Load the wildjailbreak CSV dataset and extract examples based on data_type."""
         # Load the CSV file only once
         if self._cached_dataset is None:
@@ -143,11 +173,9 @@ class WildJailbreakAdapter(DatasetAdapter):
             self._cached_dataset = pd.read_csv(self.dataset_source)
 
         # Filter by data_type and extract examples
-        return self.extract_examples(self._cached_dataset, dataset_name)
+        return self.extract_examples(self._cached_dataset)
 
-    def extract_examples(
-        self, dataset: Any, dataset_name: str
-    ) -> List[Tuple[str, str]]:
+    def extract_examples(self, dataset: Any) -> List[Tuple[str, str]]:
         """Extract examples filtering by data_type (adversarial_benign or adversarial_harmful)."""
         examples = []
 
@@ -177,10 +205,10 @@ DATASET_ADAPTERS: Dict[str, DatasetAdapter] = {
     "wildjailbreak_harmful": WildJailbreakAdapter("adversarial_harmful"),
     "wildjailbreak_benign": WildJailbreakAdapter("adversarial_benign"),
     # Deception datasets
-    "dolus_deceptive_train": DolusDatasetAdapter("deceptive"),
-    "dolus_deceptive_test": DolusDatasetAdapter("deceptive"),
-    "dolus_benign_train": DolusDatasetAdapter("benign"),
-    "dolus_benign_test": DolusDatasetAdapter("benign"),
+    "dolus_deceptive_train": DolusDatasetAdapter("deceptive_train"),
+    "dolus_deceptive_test": DolusDatasetAdapter("deceptive_test"),
+    "dolus_benign_train": DolusDatasetAdapter("benign_train"),
+    "dolus_benign_test": DolusDatasetAdapter("benign_test"),
 }
 
 

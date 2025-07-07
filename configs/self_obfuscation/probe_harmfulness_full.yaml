@@ -10,7 +10,6 @@ probes:
     target_layers: [12]
     pooling_type: "mean"
 
-# Each split will be evaluated separately
 training_datasets:
   train:
     positive: ["circuit_breakers_train"]
