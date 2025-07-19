@@ -55,9 +55,9 @@ import torch.nn.functional as F
 import gc
 import bitsandbytes as bnb
 
-from experiments.self_obfuscation_main.utils_misc import load_local_model
-from experiments.self_obfuscation_main.utils_training import train_with_gradient_context, plot_training_losses, plot_layer_norms
-from experiments.self_obfuscation_main.utils_testing import test_probe_on_model
+from experiments.self_obfuscation_v0.utils_misc import load_local_model
+from experiments.self_obfuscation_v0.utils_training import train_with_gradient_context, plot_training_losses, plot_layer_norms
+from experiments.self_obfuscation_v0.utils_testing import test_probe_on_model
 
 
 def load_concept_probes(probe_checkpoints_path: str) -> Dict[str, object]:
@@ -74,37 +74,160 @@ def load_concept_probes(probe_checkpoints_path: str) -> Dict[str, object]:
     return concept_to_probe
 
 
-def load_synthetic_concept_data(synthetic_data_dir: str, concepts: List[str]) -> Tuple[Dict[str, List[Tuple[str, str]]], Dict[str, List[Tuple[str, str]]]]:
-    """Load synthetic data for specified concepts. Returns both topical and vanilla data."""
+def load_mega_dataset(dataset_path: str, use_topical_ratings: bool = True) -> List[Dict]:
+    """
+    Loads the evaluated mega dataset from JSON file.
+    
+    Args:
+        dataset_path: Path to the mega dataset JSON file
+        use_topical_ratings: Whether to use topical_response ratings or vanilla_response ratings
+    
+    Returns:
+        List of dataset items
+    """
+    with open(dataset_path, 'r', encoding='utf-8') as f:
+        data = json.load(f)
+    
+    print(f"Loaded {len(data)} samples from {dataset_path}")
+    return data
+
+def extract_adjective_data(data: List[Dict], adjective: str, positive_threshold: float = 0.75, 
+                          negative_threshold: float = 0.25, use_topical_ratings: bool = True,
+                          exclude_refusals: bool = True) -> Tuple[List[Tuple[str, str]], List[Tuple[str, str]]]:
+    """
+    Extract positive and negative samples for a specific adjective based on normalized ratings.
+    
+    Args:
+        data: List of dataset items
+        adjective: The adjective to extract data for
+        positive_threshold: Threshold for positive samples (>= this value)
+        negative_threshold: Threshold for negative samples (<= this value)
+        use_topical_ratings: Whether to use topical_response ratings or vanilla_response ratings
+        exclude_refusals: Whether to exclude refusal samples
+    
+    Returns:
+        Tuple of (positive_samples, negative_samples)
+    """
+    positive_samples = []
+    negative_samples = []
+    
+    # Determine which ratings to use
+    prompt_ratings_key = "prompt_normalized_ratings"
+    response_ratings_key = "topical_response_normalized_ratings" if use_topical_ratings else "vanilla_response_normalized_ratings"
+    response_key = "topical_response" if use_topical_ratings else "vanilla_response"
+    refusal_key = "is_topical_response_refusal" if use_topical_ratings else "is_vanilla_response_refusal"
+    
+    for item in data:
+        # Skip refusals if requested
+        if exclude_refusals and item.get(refusal_key, False):
+            continue
+            
+        # Skip if we don't have the required ratings
+        if (prompt_ratings_key not in item or 
+            response_ratings_key not in item or 
+            adjective not in item[prompt_ratings_key] or 
+            adjective not in item[response_ratings_key]):
+            continue
+            
+        prompt = item.get("prompt")
+        response = item.get(response_key)
+        
+        if not prompt or not response or not item[prompt_ratings_key][adjective] or not item[response_ratings_key][adjective]:
+            continue
+            
+        # Get ratings for this adjective
+        prompt_rating = item[prompt_ratings_key][adjective]
+        response_rating = item[response_ratings_key][adjective]
+        
+        # Check if either prompt or response rating meets the threshold
+        max_rating = max(prompt_rating, response_rating)
+        min_rating = min(prompt_rating, response_rating)
+        
+        # Use the higher rating to determine classification
+        # This means if either prompt or response is strongly positive/negative, we use that
+        sample_tuple = (prompt, response)
+        
+        if max_rating >= positive_threshold:
+            positive_samples.append(sample_tuple)
+        elif min_rating <= negative_threshold:
+            negative_samples.append(sample_tuple)
+        # Samples in between thresholds are ignored
+    
+    return positive_samples, negative_samples
+
+def get_all_adjectives(data: List[Dict], use_topical_ratings: bool = True) -> List[str]:
+    """
+    Get all adjectives present in the dataset.
+    
+    Args:
+        data: List of dataset items
+        use_topical_ratings: Whether to use topical_response ratings or vanilla_response ratings
+    
+    Returns:
+        List of adjective names
+    """
+    adjectives = set()
+    
+    prompt_ratings_key = "prompt_normalized_ratings"
+    response_ratings_key = "topical_response_normalized_ratings" if use_topical_ratings else "vanilla_response_normalized_ratings"
+    
+    for item in data:
+        if prompt_ratings_key in item:
+            adjectives.update(item[prompt_ratings_key].keys())
+        if response_ratings_key in item:
+            adjectives.update(item[response_ratings_key].keys())
+    
+    return sorted(list(adjectives))
+
+def load_labelled_concept_data(dataset_path: str, concepts: List[str], positive_threshold: float = 0.75,
+                               negative_threshold: float = 0.25, use_topical_ratings: bool = True) -> Tuple[Dict[str, List[Tuple[str, str]]], Dict[str, List[Tuple[str, str]]]]:
+    """
+    Load labelled data for specified concepts. Returns both topical and vanilla data.
+    
+    Args:
+        dataset_path: Path to the evaluated mega dataset JSON file
+        concepts: List of concept names to load data for
+        positive_threshold: Threshold for positive samples (>= this value)
+        negative_threshold: Threshold for negative samples (<= this value)
+        use_topical_ratings: Whether to use topical_response ratings or vanilla_response ratings
+    
+    Returns:
+        Tuple of (concept_to_topical_data, concept_to_vanilla_data)
+    """
+    # Load the mega dataset
+    data = load_mega_dataset(dataset_path, use_topical_ratings)
+    
+    # Get all available adjectives
+    all_adjectives = get_all_adjectives(data, use_topical_ratings)
+    
+    # Filter to only requested concepts that exist in the dataset
+    available_concepts = [c for c in concepts if c in all_adjectives]
+    missing_concepts = [c for c in concepts if c not in all_adjectives]
+    
+    if missing_concepts:
+        print(f"Warning: The following concepts are not in the dataset: {missing_concepts}")
+    
     concept_to_topical_data = {}
     concept_to_vanilla_data = {}
     
-    for concept in concepts:
-        json_file = os.path.join(synthetic_data_dir, f"{concept}.json")
-        if not os.path.exists(json_file):
-            print(f"Warning: No data file found for concept '{concept}' at {json_file}")
-            continue
-            
-        with open(json_file, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-            
-        topical_examples = []
-        vanilla_examples = []
-        for item in data:
-            if item.get('is_topical_response_refusal', False):
-                continue
-            prompt = item.get("prompt")
-            topical_response = item.get("topical_response")
-            vanilla_response = item.get("vanilla_response")
-            
-            if prompt and topical_response:
-                topical_examples.append((prompt, topical_response))
-            if prompt and vanilla_response:
-                vanilla_examples.append((prompt, vanilla_response))
-                
-        concept_to_topical_data[concept] = topical_examples
-        concept_to_vanilla_data[concept] = vanilla_examples
-        print(f"Loaded {len(topical_examples)} topical and {len(vanilla_examples)} vanilla examples for concept '{concept}'")
+    for concept in available_concepts:
+        # Extract positive samples for topical data
+        positive_topical, negative_topical = extract_adjective_data(
+            data, concept, positive_threshold, negative_threshold, 
+            use_topical_ratings=True, exclude_refusals=True
+        )
+        
+        # Extract positive samples for vanilla data
+        positive_vanilla, negative_vanilla = extract_adjective_data(
+            data, concept, positive_threshold, negative_threshold, 
+            use_topical_ratings=False, exclude_refusals=True
+        )
+        
+        # Use positive samples as the concept data
+        concept_to_topical_data[concept] = positive_topical
+        concept_to_vanilla_data[concept] = positive_vanilla
+        
+        print(f"Loaded {len(positive_topical)} topical and {len(positive_vanilla)} vanilla examples for concept '{concept}'")
     
     return concept_to_topical_data, concept_to_vanilla_data
 
@@ -748,8 +871,8 @@ def train_concept_self_obfuscation_model(
     model_name: str = "gemma_2_9b_instruct",
     model_checkpoint: str = None,
     probe_checkpoints: str = "20250701_002418_TRAIN_synthetic_logistic_12",
-    synthetic_data_dir: str = "datasets/synthetic_data/outputs/20250629_134811",
-    ultrachat_json: str = "datasets/self_obfuscation/outputs/ultrachat_model_training_data_20250215_023915.json",
+    dataset_path: str = "data/synthetic_data/outputs/20250629_134811/evaluated/mega_dataset_evaluated_20250716_000830.json",
+    ultrachat_json: str = "data/self_obfuscation/outputs/ultrachat_model_training_data_20250215_023915.json",
     target_concepts: List[str] = None,
     num_samples_per_concept: int = 50,
     num_epochs: int = 3,
@@ -757,6 +880,9 @@ def train_concept_self_obfuscation_model(
     behaviour_lambda: float = 0.1,
     custom_folder_name: str = "",
     save_model_checkpoint: bool = False,
+    positive_threshold: float = 0.75,
+    negative_threshold: float = 0.25,
+    use_topical_ratings: bool = True,
     logger = None
 ):
     """Train a model to perform self-obfuscation against concept probes."""
@@ -781,8 +907,10 @@ def train_concept_self_obfuscation_model(
     available_concepts = [c for c in target_concepts if c in concept_to_probe]
     logger.print(f"Available concepts with probes: {available_concepts}")
     
-    logger.print(f"Loading synthetic concept data from: {synthetic_data_dir}")
-    concept_to_topical_data, concept_to_vanilla_data = load_synthetic_concept_data(synthetic_data_dir, available_concepts)
+    logger.print(f"Loading labelled concept data from: {dataset_path}")
+    concept_to_topical_data, concept_to_vanilla_data = load_labelled_concept_data(
+        dataset_path, available_concepts, positive_threshold, negative_threshold, use_topical_ratings
+    )
     
     logger.print(f"Loading UltraChat data from: {ultrachat_json}")
     ultrachat_data = load_ultrachat_data(ultrachat_json)
@@ -813,12 +941,16 @@ def train_concept_self_obfuscation_model(
         "model_name": model_name,
         "model_checkpoint": model_checkpoint,
         "probe_checkpoints": probe_checkpoints,
+        "dataset_path": dataset_path,
         "target_concepts": available_concepts,
         "num_samples_per_concept": num_samples_per_concept,
         "num_epochs": num_epochs,
         "learning_rate": learning_rate,
         "behaviour_lambda": behaviour_lambda,
         "target_layers": target_layers,
+        "positive_threshold": positive_threshold,
+        "negative_threshold": negative_threshold,
+        "use_topical_ratings": use_topical_ratings,
         "training_data_sizes": {k: len(v) for k, v in data_splits.items()}
     }
     
@@ -908,11 +1040,11 @@ if __name__ == "__main__":
     parser.add_argument('--probe_checkpoints', type=str,
                       default="20250701_002418_TRAIN_synthetic_logistic_12",
                       help='Name of probe checkpoints directory')
-    parser.add_argument('--synthetic_data_dir', type=str,
-                      default="datasets/synthetic_data/outputs/20250629_134811",
-                      help='Directory containing synthetic concept data')
+    parser.add_argument('--dataset_path', type=str,
+                      default="data/synthetic_data/outputs/20250629_134811/evaluated/mega_dataset_evaluated_20250716_000830.json",
+                      help='Path to the evaluated mega dataset JSON file')
     parser.add_argument('--ultrachat_json', type=str,
-                      default="datasets/self_obfuscation/outputs/ultrachat_model_training_data_20250215_023915.json",
+                      default="data/self_obfuscation/outputs/ultrachat_model_training_data_20250215_023915.json",
                       help='Path to UltraChat training data')
     parser.add_argument('--target_concepts', type=str, nargs='+',
                       default=["excited", "german", "jokey", "all-caps", "mathematical", 
@@ -930,6 +1062,14 @@ if __name__ == "__main__":
                       help='Custom folder name for outputs')
     parser.add_argument('--save_model_checkpoint', action='store_true',
                       help='Whether to save the model checkpoint after training')
+    parser.add_argument('--positive_threshold', type=float, default=0.75,
+                      help='Threshold for positive samples (>= this value)')
+    parser.add_argument('--negative_threshold', type=float, default=0.25,
+                      help='Threshold for negative samples (<= this value)')
+    parser.add_argument('--use_topical_ratings', action='store_true', default=True,
+                      help='Use topical response ratings instead of vanilla response ratings')
+    parser.add_argument('--use_vanilla_ratings', dest='use_topical_ratings', action='store_false',
+                      help='Use vanilla response ratings instead of topical response ratings')
     
     args = parser.parse_args()
     
@@ -937,7 +1077,7 @@ if __name__ == "__main__":
         model_name=args.model_name,
         model_checkpoint=args.model_checkpoint,
         probe_checkpoints=args.probe_checkpoints,
-        synthetic_data_dir=args.synthetic_data_dir,
+        dataset_path=args.dataset_path,
         ultrachat_json=args.ultrachat_json,
         target_concepts=args.target_concepts,
         num_samples_per_concept=args.num_samples_per_concept,
@@ -945,5 +1085,8 @@ if __name__ == "__main__":
         learning_rate=args.learning_rate,
         behaviour_lambda=args.behaviour_lambda,
         custom_folder_name=args.custom_folder_name,
-        save_model_checkpoint=args.save_model_checkpoint
+        save_model_checkpoint=args.save_model_checkpoint,
+        positive_threshold=args.positive_threshold,
+        negative_threshold=args.negative_threshold,
+        use_topical_ratings=args.use_topical_ratings
     )

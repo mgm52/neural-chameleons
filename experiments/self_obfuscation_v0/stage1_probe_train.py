@@ -24,15 +24,15 @@ import argparse
 import yaml
 from datasets import load_dataset
 
-from experiments.self_obfuscation_main.utils_testing import test_probe_on_model
+from experiments.self_obfuscation_v0.utils_testing import test_probe_on_model
 from obf_reps.logging import CSVTXTLogger
-from experiments.self_obfuscation_main.utils_misc import (
+from experiments.self_obfuscation_v0.utils_misc import (
     VariedDirectPromptFormatter,
     cut_to_first_and_last_sentence,
     cut_to_first_sentence,
     load_local_model,
 )
-from experiments.self_obfuscation_main.utils_training import words_data_to_probes
+from experiments.self_obfuscation_v0.utils_training import words_data_to_probes
 
 # Valid splits: train_sft, test_sft, train_gen, test_gen
 def load_ultrachat_sample(num_conversations=100, split="test_gen"):
@@ -177,7 +177,7 @@ def train_and_save_probes(
     prompt_formatter = VariedDirectPromptFormatter()
 
     # For each word, generate a list of num_sentences_per_word benign prompt responses from ultrachat
-    benign_data_path = "datasets/self_obfuscation/outputs/ultrachat_probe_training_data_20250215_023915.json"
+    benign_data_path = "data/self_obfuscation/outputs/ultrachat_probe_training_data_20250215_023915.json"
     word_to_ultrachat_probe_training_data = get_word_to_ultrachat_probe_training_data(benign_data_path)
     for word, examples in word_to_ultrachat_probe_training_data.items():
         logger.print(f"Word '{word}' has {len(examples)} benign training examples.")
@@ -253,7 +253,16 @@ def train_and_save_probes(
         # Save training probes
         for word, metric in training_word_to_probe.items():
             all_word_to_probe[word] = metric
-            metric.model = None  # remove reference to reduce file size
+
+            if hasattr(metric, 'data_module'):
+                metric.data_module = None
+            if hasattr(metric, 'reps_bank'):
+                metric.reps_bank = None  
+            if hasattr(metric, 'test_reps_bank'):
+                metric.test_reps_bank = None
+            if hasattr(metric, 'model'):
+                metric.model = None        
+
             with open(f"{directory}/train_{word}.pkl", "wb") as f:
                 pickle.dump(metric, f)
         logger.print(f"Saved training probes to {directory}")
@@ -286,7 +295,14 @@ def train_and_save_probes(
         # Save test probes
         for word, metric in test_word_to_probe.items():
             all_word_to_probe[word] = metric
-            metric.model = None
+            if hasattr(metric, 'data_module'):
+                metric.data_module = None
+            if hasattr(metric, 'reps_bank'):
+                metric.reps_bank = None  
+            if hasattr(metric, 'test_reps_bank'):
+                metric.test_reps_bank = None
+            if hasattr(metric, 'model'):
+                metric.model = None        
             with open(f"{directory}/test_{word}.pkl", "wb") as f:
                 pickle.dump(metric, f)
         logger.print(f"Saved test probes to {directory}")
@@ -357,14 +373,14 @@ if __name__ == "__main__":
     latest_probe_training_path = get_latest_file(
         # Hack: look for *instruct.json to differentiate from twoword.json...
         "probe_training_training_words_sentences_dict*instruct.json",
-        "datasets/self_obfuscation/outputs"
+        "data/self_obfuscation/outputs"
     )
     if not latest_probe_training_path:
         raise ValueError("No probe training data found")
     latest_probe_testing_path = get_latest_file(
         # Hack: look for *instruct.json to differentiate from twoword.json...
         "probe_training_test_words_sentences_dict*instruct.json",
-        "datasets/self_obfuscation/outputs"
+        "data/self_obfuscation/outputs"
     )
     if not latest_probe_testing_path:
         raise ValueError("No probe testing data found")

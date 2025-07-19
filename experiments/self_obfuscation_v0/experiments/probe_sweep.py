@@ -9,17 +9,17 @@ import argparse
 import yaml
 from datasets import load_dataset
 
-from experiments.self_obfuscation_main.stage1_probe_train import train_and_save_probes
-from experiments.self_obfuscation_main.utils_testing import test_probe_on_model
+from experiments.self_obfuscation_v0.stage1_probe_train import train_and_save_probes
+from experiments.self_obfuscation_v0.utils_testing import test_probe_on_model
 from obf_reps.logging import CSVTXTLogger
-from experiments.self_obfuscation_main.utils_misc import (
+from experiments.self_obfuscation_v0.utils_misc import (
     VariedDirectPromptFormatter,
     cut_to_first_and_last_sentence,
     cut_to_first_sentence,
     load_local_model,
     run_script,
 )
-from experiments.self_obfuscation_main.utils_training import words_data_to_probes
+from experiments.self_obfuscation_v0.utils_training import words_data_to_probes
 
 
 if __name__ == "__main__":
@@ -85,14 +85,14 @@ if __name__ == "__main__":
     latest_probe_training_path = get_latest_file(
         # Hack: look for *instruct.json to differentiate from twoword.json...
         "probe_training_training_words_sentences_dict*instruct.json",
-        "datasets/self_obfuscation/outputs"
+        "data/self_obfuscation/outputs"
     )
     if not latest_probe_training_path:
         raise ValueError("No probe training data found")
     latest_probe_testing_path = get_latest_file(
         # Hack: look for *instruct.json to differentiate from twoword.json...
         "probe_training_test_words_sentences_dict*instruct.json",
-        "datasets/self_obfuscation/outputs"
+        "data/self_obfuscation/outputs"
     )
     if not latest_probe_testing_path:
         raise ValueError("No probe testing data found")
@@ -111,8 +111,8 @@ if __name__ == "__main__":
     ### New code for both training & testing
 
     # Load pre-generated test data
-    print(f"Loading test data from datasets/self_obfuscation/outputs/conditional_test_data_gemma_2_9b_instruct_20250226_010745.json")
-    test_data_path = "datasets/self_obfuscation/outputs/conditional_test_data_gemma_2_9b_instruct_20250226_010745.json"
+    print(f"Loading test data from data/self_obfuscation/outputs/conditional_test_data_gemma_2_9b_instruct_20250226_010745.json")
+    test_data_path = "data/self_obfuscation/outputs/conditional_test_data_gemma_2_9b_instruct_20250226_010745.json"
     with open(test_data_path, "r") as f:
         pregen_data = json.load(f)
 

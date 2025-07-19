@@ -20,7 +20,6 @@ OUTPUTS:
 - Training metadata (metadata.json) containing parameters needed for testing.
 """
 import argparse
-import glob
 import json
 import os
 import pickle
@@ -28,89 +27,25 @@ import random
 import gc
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Optional
 
 import numpy as np
-import psutil
 import torch
 
 # Assuming these files are in the PYTHONPATH or a discoverable path
 from obf_reps.logging import CSVTXTLogger
 from obf_reps.models.hf import HFHardPrompted
-from experiments.self_obfuscation_main.utils_misc import load_local_model
-from experiments.self_obfuscation_main.utils_training import train_probe
+from experiments.self_obfuscation_v0.utils_misc import load_local_model, get_memory_usage, print_memory_usage, cleanup_memory
+from experiments.self_obfuscation_v0.utils_training import train_probe
 
-def get_memory_usage():
-    """Get current memory usage in MB."""
-    process = psutil.Process()
-    memory_info = process.memory_info()
-    return memory_info.rss / 1024 / 1024
-
-def print_memory_usage(stage: str, logger=None):
-    """Print current memory usage."""
-    memory_mb = get_memory_usage()
-    message = f"Memory usage at {stage}: {memory_mb:.1f} MB"
-    if logger:
-        logger.print(message)
-    else:
-        print(message)
-
-def cleanup_memory():
-    """Force garbage collection and clear GPU cache if available."""
-    gc.collect()
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
-
-def load_synthetic_data(data_dir: str, exclude_refusals: bool = True, include_probe_names: list = []) -> Dict[str, List[Tuple[str, str, None]]]:
-    """
-    Loads all synthetic data from a directory of JSON files, including only those whose stem matches include_probe_names.
-    If include_probe_names is empty, all probes are included.
-    """
-    adjective_to_data = {}
-    json_files = glob.glob(os.path.join(data_dir, '*.json'))
-    if not json_files:
-        raise FileNotFoundError(f"No JSON files found in directory: {data_dir}")
-    print(f"Found {len(json_files)} JSON files to process.")
-    include_probe_names_set = set(include_probe_names) if include_probe_names else None
-    for file_path in json_files:
-        adjective = Path(file_path).stem
-        if include_probe_names_set is not None and adjective not in include_probe_names_set:
-            print(f"Excluding file {file_path} (adjective '{adjective}') - not in include_probe_names.")
-            continue
-        try:
-            with open(file_path, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-        except (json.JSONDecodeError, IOError) as e:
-            print(f"Warning: Could not read or parse {file_path}. Skipping. Error: {e}")
-            continue
-        adjective_examples = []
-        for item in data:
-            if exclude_refusals and item.get('is_topical_response_refusal', False):
-                continue
-            prompt, topical_response = item.get("prompt"), item.get("topical_response")
-            if prompt and topical_response:
-                adjective_examples.append((prompt, topical_response, None))
-        if adjective_examples:
-            adjective_to_data[adjective] = adjective_examples
-            print(f"Loaded {len(adjective_examples)} non-refusal examples for adjective '{adjective}'.")
-    return adjective_to_data
-
-def split_data(data_list: list, test_size: int, seed: int) -> Tuple[list, list]:
-    """Splits a list of data into training and testing sets."""
-    if test_size <= 0:
-        return data_list, []
-    random.Random(seed).shuffle(data_list)
-    actual_test_size = min(test_size, len(data_list))
-    if actual_test_size < test_size:
-        print(f"Warning: Requested test size {test_size}, but only {len(data_list)} samples available. Using {actual_test_size}.")
-    test_set = data_list[:actual_test_size]
-    train_set = data_list[actual_test_size:]
-    return train_set, test_set
+# Import utility modules
+from experiments.self_obfuscation_v1.utils_data import load_synthetic_concept_data, split_data
+from experiments.self_obfuscation_v1.utils_setup import setup_experiment_directory, setup_logger, save_metadata, create_experiment_metadata
 
 
 def train_probe_with_plotting(model: HFHardPrompted, pos_samples: List[Tuple[str, str, List[int]]], neg_samples: List[Tuple[str, str, List[int]]], logger, target_layers: List[int], probe_type: str = "mlp", learning_rate: float = 5e-4, batch_size: int = 64, num_epochs: int = 5, adjective: str = "unknown"):
     """Train probe using the existing probe training infrastructure."""
-    from experiments.self_obfuscation_main.utils_training import ResponseProbeDataModule
+    from experiments.self_obfuscation_v0.utils_training import ResponseProbeDataModule
     from obf_reps.metrics import MetricConfig, MLPMetric, LogisticRegressionMetric
     
     print_memory_usage(f"start of probe training for {adjective}", logger)
@@ -176,7 +111,7 @@ def train_synthetic_probes(
     synthetic_data_dir: str,
     output_dir_base: str,
     model_name: str,
-    model_checkpoint: str = None,
+    model_checkpoint: Optional[str] = None,
     target_layers: str = "12",
     probe_type: str = "logistic",
     learning_rate: float = 5e-4,
@@ -191,15 +126,19 @@ def train_synthetic_probes(
     random.seed(seed)
     
     # 1. Setup Logger and Output Directory
-    logger = CSVTXTLogger(print_logs_to_console=True)
-    date_time = datetime.now().strftime("%Y%m%d_%H%M%S")
-    if custom_folder_name:
-        directory = os.path.join(output_dir_base, custom_folder_name)
-    else:
-        model_suffix = "_finetuned" if model_checkpoint else ""
-        layers_str = target_layers.replace(',', '-')
-        directory = os.path.join(output_dir_base, f"{date_time}_TRAIN_synthetic_{probe_type}_{layers_str}{model_suffix}")
-    os.makedirs(directory, exist_ok=True)
+    logger = setup_logger(print_to_console=True)
+    
+    # Create directory with appropriate suffix
+    model_suffix = "_finetuned" if model_checkpoint else ""
+    layers_str = target_layers.replace(',', '-')
+    additional_suffix = f"synthetic_{probe_type}_{layers_str}{model_suffix}"
+    
+    directory = setup_experiment_directory(
+        output_dir_base=output_dir_base,
+        custom_folder_name=custom_folder_name,
+        experiment_type="TRAIN",
+        additional_suffix=additional_suffix
+    )
     
     logger.print(f"Probe outputs will be saved to: {directory}")
 
@@ -212,7 +151,12 @@ def train_synthetic_probes(
     # 3. Load and Prepare Synthetic Data
     logger.print(f"\nLoading synthetic data from {synthetic_data_dir}...")
     print_memory_usage("before loading synthetic data", logger)
-    adjective_to_data = load_synthetic_data(synthetic_data_dir, include_probe_names=include_probe_names)
+    topical_data, _ = load_synthetic_concept_data(synthetic_data_dir, include_probe_names, exclude_refusals=True)
+    # Convert to expected format (prompt, response, None)
+    adjective_to_data = {
+        concept: [(prompt, response, None) for prompt, response in examples]
+        for concept, examples in topical_data.items()
+    }
     all_adjectives = sorted(list(adjective_to_data.keys()))
     target_layers_list = [int(layer) for layer in target_layers.split(",")]
     print_memory_usage("after loading synthetic data", logger)
@@ -253,7 +197,14 @@ def train_synthetic_probes(
         )
         
         # e. Save the probe
-        probe.model = None # Don't save the large base model with the probe
+        if hasattr(probe, 'data_module'):
+            probe.data_module = None
+        if hasattr(probe, 'reps_bank'):
+            probe.reps_bank = None  
+        if hasattr(probe, 'test_reps_bank'):
+            probe.test_reps_bank = None
+        if hasattr(probe, 'model'):
+            probe.model = None        
         probe_path = os.path.join(directory, f"{probed_adjective}.pkl")
         with open(probe_path, "wb") as f:
             pickle.dump(probe, f)
@@ -266,22 +217,21 @@ def train_synthetic_probes(
 
     # 5. Save Final Metadata
     # This metadata is crucial for the testing script to reproduce the test split.
-    metadata = {
-        "train_run_date_time": date_time,
-        "model_name": model_name,
-        "model_checkpoint": model_checkpoint,
-        "synthetic_data_dir": synthetic_data_dir,
-        "target_layers": target_layers_list,
-        "adjectives_trained": all_adjectives,
-        "probe_type": probe_type,
-        "learning_rate": learning_rate,
-        "batch_size": batch_size,
-        "num_epochs": num_epochs,
-        "seed": seed,
-        "num_test_samples_per_class": num_test_samples, # Critical for test script
-    }
-    with open(os.path.join(directory, "metadata.json"), "w") as f:
-        json.dump(metadata, f, indent=2)
+    metadata = create_experiment_metadata(
+        experiment_type="probe_training",
+        model_name=model_name,
+        model_checkpoint=model_checkpoint,
+        synthetic_data_dir=synthetic_data_dir,
+        target_layers=target_layers_list,
+        adjectives_trained=all_adjectives,
+        probe_type=probe_type,
+        learning_rate=learning_rate,
+        batch_size=batch_size,
+        num_epochs=num_epochs,
+        seed=seed,
+        num_test_samples_per_class=num_test_samples, # Critical for test script
+    )
+    save_metadata(directory, metadata)
         
     logger.print(f"\nSaved all training metadata to: {directory}")
     logger.print(f"\nFinished training all probes.")
@@ -294,7 +244,7 @@ if __name__ == "__main__":
         formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
     # --- Core arguments ---
-    parser.add_argument("--synthetic_data_dir", type=str, default="datasets/synthetic_data/outputs/20250629_134811", help="Directory containing the synthetic data JSON files.")
+    parser.add_argument("--synthetic_data_dir", type=str, default="data/synthetic_data/outputs/20250629_134811", help="Directory containing the synthetic data JSON files.")
     parser.add_argument("--output_dir_base", type=str, default="experiments/self_obfuscation_concepts/outputs/probe_checkpoints", help="Base directory to save outputs.")
     parser.add_argument("--custom_folder_name", type=str, default="", help="Custom folder name for the output. If not provided, a name is generated.")
     
@@ -312,7 +262,8 @@ if __name__ == "__main__":
     # --- Data splitting arguments ---
     parser.add_argument("--num_test_samples", type=int, default=1024, help="Number of positive and negative synthetic samples to hold out for testing.")
     parser.add_argument("--seed", type=int, default=42, help="Random seed for reproducibility of data splitting.")
-    parser.add_argument("--include_probe_names", type=str, nargs="*", default=["boring", "all-caps", "short-sentence-only", "jokey", "commanding", "markdown-formatted", "chemistry-based", "german", "excited", "biology-focused", "rhyming", "mathematical", "literature-focused"], help="List of probe names (adjective file stems) to include in training. If empty, all probes are included.")
+    parser.add_argument("--include_probe_names", type=str, nargs="*", default=["fun", "confused", "sleepy", "angry", "json-formatted", "philosophical", "french-language"], help="List of probe names (adjective file stems) to include in training. If empty, all probes are included.")
+    #parser.add_argument("--include_probe_names", type=str, nargs="*", default=["boring", "all-caps", "short-sentence-only", "jokey", "commanding", "markdown-formatted", "chemistry-based", "german", "excited", "biology-focused", "rhyming", "mathematical", "literature-focused"], help="List of probe names (adjective file stems) to include in training. If empty, all probes are included.")
     
     args = parser.parse_args()
 

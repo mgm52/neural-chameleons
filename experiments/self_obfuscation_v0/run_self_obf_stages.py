@@ -10,10 +10,10 @@ from datetime import datetime
 import torch
 
 # Import the functions from the modules
-from experiments.self_obfuscation_main.utils_misc import load_local_model, run_script
+from experiments.self_obfuscation_v0.utils_misc import load_local_model, run_script
 from stage1_probe_train import train_and_save_probes
 from stage2_model_train import train_and_test_conditional_model
-from experiments.self_obfuscation_main.utils_testing import test_probe_on_model
+from experiments.self_obfuscation_v0.utils_testing import test_probe_on_model
 from datasets.self_obfuscation.stage1_data_gen_probe_train import generate_probe_test_and_train_data
 from datasets.self_obfuscation.stage1_data_gen_model_train import generate_model_training_data
 from obf_reps.logging import CSVTXTLogger
@@ -120,14 +120,14 @@ def main(config_path="configs/self_obfuscation/config.yaml"):
                     # -----------------
                     if 0 in stages_to_run:
                         run_script(
-                            "datasets/self_obfuscation/stage0_data_gen_synthetic_test.py",
+                            "data/self_obfuscation/stage0_data_gen_synthetic_test.py",
                             model_name=model_name
                         )
 
                     # Get the latest test data (required for next steps)
                     latest_test_data_path = get_latest_file(
                         f"conditional_test_data_{model_name}*.json",
-                        "datasets/self_obfuscation/outputs"
+                        "data/self_obfuscation/outputs"
                     )
                     if not latest_test_data_path:
                         raise FileNotFoundError(
@@ -149,11 +149,11 @@ def main(config_path="configs/self_obfuscation/config.yaml"):
                         # JSON paths to load training/test data
                         latest_probe_training_path = get_latest_file(
                             "probe_training_training_words_sentences_dict*instruct.json",
-                            "datasets/self_obfuscation/outputs"
+                            "data/self_obfuscation/outputs"
                         )
                         latest_probe_testing_path = get_latest_file(
                             "probe_training_test_words_sentences_dict*instruct.json",
-                            "datasets/self_obfuscation/outputs"
+                            "data/self_obfuscation/outputs"
                         )
 
                         if regenerate_training_data or not latest_probe_training_path or not latest_probe_testing_path:
@@ -167,11 +167,11 @@ def main(config_path="configs/self_obfuscation/config.yaml"):
                             )
                             latest_probe_training_path = get_latest_file(
                                 "probe_training_training_words_sentences_dict*.json",
-                                "datasets/self_obfuscation/outputs"
+                                "data/self_obfuscation/outputs"
                             )
                             latest_probe_testing_path = get_latest_file(
                                 "probe_training_test_words_sentences_dict*.json",
-                                "datasets/self_obfuscation/outputs"
+                                "data/self_obfuscation/outputs"
                             )
 
                         word_to_probe, probe_dir = train_and_save_probes(
@@ -227,11 +227,11 @@ def main(config_path="configs/self_obfuscation/config.yaml"):
                     if 3 in stages_to_run:
                         latest_ultrachat_path = get_latest_file(
                             "ultrachat_model_training_data*.json",
-                            "datasets/self_obfuscation/outputs"
+                            "data/self_obfuscation/outputs"
                         )
                         latest_training_data = get_latest_file(
                             f"model_training_data_{model_name}*.json",
-                            "datasets/self_obfuscation/outputs"
+                            "data/self_obfuscation/outputs"
                         )
                         # If existing training data is found and we are not regenerating,
                         # use that; otherwise create a new file name.
@@ -253,7 +253,7 @@ def main(config_path="configs/self_obfuscation/config.yaml"):
                             )
                             latest_training_data = get_latest_file(
                                 f"model_training_data_{model_name}*.json",
-                                "datasets/self_obfuscation/outputs"
+                                "data/self_obfuscation/outputs"
                             )
 
                         print("\nTraining and testing conditional model...")

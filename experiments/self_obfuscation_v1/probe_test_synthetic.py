@@ -31,7 +31,7 @@ import random
 import gc
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Optional
 
 import numpy as np
 import torch
@@ -42,168 +42,21 @@ from datasets import load_dataset
 from obf_reps.logging import CSVTXTLogger
 from obf_reps.metrics import TrainableMetric
 from obf_reps.models.hf import HFHardPrompted
-from experiments.self_obfuscation_main.utils_misc import load_local_model
+from experiments.self_obfuscation_v0.utils_misc import load_local_model
 
-# Helper functions for loading and processing data
-# (Copied from stage2_synthetic_probe_train.py for self-containment)
-
-def load_ultrachat_sample(num_conversations=100, split="test_gen"):
-    """Load a sample from UltraChat dataset."""
-    dataset = load_dataset("HuggingFaceH4/ultrachat_200k", split=split, trust_remote_code=True)
-    sampled_dataset = dataset.select(range(min(num_conversations, len(dataset))))
-    return sampled_dataset
-
-def extract_prompt_response_from_conversation(conversation, cut_prompt_to_first_and_last_sentence=False, cut_response_to_first_sentence=False, minimum_response_cut_length=-1):
-    """Extract a prompt/response pair from a conversation, with safety checks."""
-    if not conversation or len(conversation) < 2: return None, None
-    prompt_msg, response_msg = conversation[0], conversation[1]
-    if not isinstance(prompt_msg, dict) or not isinstance(response_msg, dict): return None, None
-    prompt, response = prompt_msg.get("content"), response_msg.get("content")
-    if not prompt or not response: return None, None
-    if cut_prompt_to_first_and_last_sentence: prompt = cut_to_first_and_last_sentence(prompt)
-    if cut_response_to_first_sentence: response = cut_to_first_sentence(response, minimum_response_cut_length)
-    return prompt, response
-
-def cut_to_first_sentence(text, minimum_cut_length=-1):
-    """Cuts a text to the first sentence that ends after a minimum length."""
-    end_chars = '.!?\n'
-    start_search = minimum_cut_length if minimum_cut_length > 0 else 0
-    first_end_index = -1
-    for char in end_chars:
-        index = text.find(char, start_search)
-        if index != -1 and (first_end_index == -1 or index < first_end_index):
-            first_end_index = index
-    if first_end_index != -1: return text[:first_end_index+1].strip()
-    if minimum_cut_length > 0:
-        first_end_index_any = -1
-        for char in end_chars:
-            index = text.find(char)
-            if index != -1 and (first_end_index_any == -1 or index < first_end_index_any):
-                first_end_index_any = index
-        if first_end_index_any != -1: return text[:first_end_index_any+1].strip()
-    return text.strip()
-
-def cut_to_first_and_last_sentence(text):
-    """Cut a text to just the first and last sentences."""
-    sentences = []
-    start = 0
-    for i, char in enumerate(text):
-        if char in '.!?\n':
-            sentences.append(text[start:i+1].strip())
-            start = i+1
-    if start < len(text):
-        ending = text[start:].strip()
-        if ending: sentences.append(ending)
-    if not sentences: return text
-    elif len(sentences) == 1: return sentences[0]
-    else: return sentences[0] + " " + sentences[-1]
-
-def load_synthetic_data(data_dir: str, exclude_refusals: bool = True, include_adjectives: List[str] = None) -> Dict[str, List[Tuple[str, str, None]]]:
-    """Loads all synthetic data from a directory of JSON files."""
-    adjective_to_data = {}
-    json_files = glob.glob(os.path.join(data_dir, '*.json'))
-    if not json_files: raise FileNotFoundError(f"No JSON files found in directory: {data_dir}")
-    print(f"Found {len(json_files)} JSON files to process.")
-    include_adjectives_set = set(include_adjectives) if include_adjectives else None
-    for file_path in json_files:
-        adjective = Path(file_path).stem
-        if include_adjectives_set is not None and adjective not in include_adjectives_set:
-            print(f"Excluding file {file_path} (adjective '{adjective}') - not in include_adjectives.")
-            continue
-        try:
-            with open(file_path, 'r', encoding='utf-8') as f: data = json.load(f)
-        except (json.JSONDecodeError, IOError) as e:
-            print(f"Warning: Could not read or parse {file_path}. Skipping. Error: {e}")
-            continue
-        adjective_examples = []
-        for item in data:
-            if exclude_refusals and item.get('is_topical_response_refusal', False): continue
-            prompt, topical_response = item.get("prompt"), item.get("topical_response")
-            if prompt and topical_response: adjective_examples.append((prompt, topical_response, None))
-        if adjective_examples:
-            adjective_to_data[adjective] = adjective_examples
-            print(f"Loaded {len(adjective_examples)} non-refusal examples for adjective '{adjective}'.")
-    return adjective_to_data
-
-def split_data(data_list: list, test_size: int, seed: int) -> Tuple[list, list]:
-    """Splits a list of data into training and testing sets."""
-    if test_size <= 0: return data_list, []
-    random.Random(seed).shuffle(data_list)
-    actual_test_size = min(test_size, len(data_list))
-    if actual_test_size < test_size:
-        print(f"Warning: Requested test size {test_size}, but only {len(data_list)} samples available. Using {actual_test_size}.")
-    return data_list[actual_test_size:], data_list[:actual_test_size] # train_set, test_set
-
-def get_probe_scores_with_data(model: HFHardPrompted, probe: TrainableMetric, data_samples: List[Tuple[str, str, None]], batch_size: int, desc: str) -> Tuple[List[float], List[Tuple[str, str, None]]]:
-    """Runs data through the model and probe to get activation scores along with the original data."""
-    all_scores = []
-    all_data = []
-    with torch.no_grad():
-        for i in tqdm(range(0, len(data_samples), batch_size), desc=desc):
-            batch = data_samples[i:i + batch_size]
-            if not batch: continue
-            prompts, responses = [d[0] for d in batch], [d[1] for d in batch]
-            output = model.forward_from_string(
-                input_text=prompts, target_text=responses, add_chat_template=True,
-                layers_to_probe=probe.config.layers
-            )
-            scores = probe.predict_example(
-                input_reps=output.input_reps, target_reps=output.target_reps, target_mask=output.loss_mask
-            )
-            all_scores.extend(scores.cpu().tolist())
-            all_data.extend(batch)
-            del output, scores
-            gc.collect()
-            torch.cuda.empty_cache()
-    return all_scores, all_data
-
-def get_top_bottom_examples(scores: List[float], data: List[Tuple[str, str, None]], n: int = 3) -> Dict:
-    """Get top and bottom n examples based on scores."""
-    if len(scores) != len(data):
-        return {"top_examples": [], "bottom_examples": [], "error": "Scores and data length mismatch"}
-    
-    # Create list of (score, index) pairs and sort
-    score_indices = [(score, i) for i, score in enumerate(scores)]
-    score_indices.sort(key=lambda x: x[0], reverse=True)
-    
-    # Get top n and bottom n
-    top_indices = [idx for _, idx in score_indices[:n]]
-    bottom_indices = [idx for _, idx in score_indices[-n:]]
-    
-    top_examples = [{"score": scores[i], "prompt": data[i][0], "response": data[i][1]} for i in top_indices]
-    bottom_examples = [{"score": scores[i], "prompt": data[i][0], "response": data[i][1]} for i in bottom_indices]
-    
-    return {"top_examples": top_examples, "bottom_examples": bottom_examples}
-
-def bootstrap_tpr_at_fpr_with_thresholds(pos_scores: List[float], neg_scores: List[float], fpr_level: float = 0.01, num_iterations: int = 1000) -> Dict:
-    """Calculates the mean TPR at a given FPR with confidence intervals and threshold statistics using bootstrapping."""
-    if not pos_scores or not neg_scores:
-        return {"mean_tpr": None, "tpr_ci_95": (None, None), "mean_threshold": None, "threshold_ci_95": (None, None), "error": "Not enough data for bootstrapping."}
-    
-    pos_scores_np, neg_scores_np = np.array(pos_scores), np.array(neg_scores)
-    tpr_samples = []
-    threshold_samples = []
-    
-    for _ in range(num_iterations):
-        neg_resample = np.random.choice(neg_scores_np, size=len(neg_scores_np), replace=True)
-        pos_resample = np.random.choice(pos_scores_np, size=len(pos_scores_np), replace=True)
-        threshold = np.percentile(neg_resample, 100 * (1 - fpr_level))
-        tpr = np.mean(pos_resample > threshold)
-        tpr_samples.append(tpr)
-        threshold_samples.append(threshold)
-    
-    mean_tpr = np.mean(tpr_samples)
-    tpr_ci_lower, tpr_ci_upper = np.percentile(tpr_samples, 2.5), np.percentile(tpr_samples, 97.5)
-    
-    mean_threshold = np.mean(threshold_samples)
-    threshold_ci_lower, threshold_ci_upper = np.percentile(threshold_samples, 2.5), np.percentile(threshold_samples, 97.5)
-    
-    return {
-        "mean_tpr": mean_tpr, 
-        "tpr_ci_95": (tpr_ci_lower, tpr_ci_upper),
-        "mean_threshold": mean_threshold,
-        "threshold_ci_95": (threshold_ci_lower, threshold_ci_upper)
-    }
+# Import utility modules
+from experiments.self_obfuscation_v1.utils_data import (
+    load_synthetic_concept_data, split_data, load_ultrachat_sample, 
+    extract_prompt_response_from_conversation, cut_to_first_sentence, 
+    cut_to_first_and_last_sentence
+)
+from experiments.self_obfuscation_v1.utils_evaluation import (
+    get_probe_scores_with_data, get_top_bottom_examples, 
+    bootstrap_tpr_at_fpr_with_thresholds
+)
+from experiments.self_obfuscation_v1.utils_setup import (
+    setup_experiment_directory, setup_logger, load_metadata, save_metadata
+)
 
 def test_and_save_synthetic_probes(
     probe_dir: str,
@@ -220,22 +73,22 @@ def test_and_save_synthetic_probes(
     random.seed(seed)
     
     # 1. Setup Logger and Output Directory
-    logger = CSVTXTLogger(print_logs_to_console=True)
-    date_time = datetime.now().strftime("%Y%m%d_%H%M%S")
-    if custom_folder_name:
-        directory = os.path.join(output_dir_base, custom_folder_name)
-    else:
-        probe_folder_name = Path(probe_dir).name
-        directory = os.path.join(output_dir_base, f"{date_time}_TEST__{probe_folder_name}")
-    os.makedirs(directory, exist_ok=True)
+    logger = setup_logger(print_to_console=True)
+    
+    # Create directory name
+    probe_folder_name = Path(probe_dir).name
+    additional_suffix = f"__{probe_folder_name}"
+    
+    directory = setup_experiment_directory(
+        output_dir_base=output_dir_base,
+        custom_folder_name=custom_folder_name,
+        experiment_type="TEST",
+        additional_suffix=additional_suffix
+    )
     logger.print(f"Output will be saved to: {directory}")
 
     # 2. Load Training Metadata and Model
-    metadata_path = os.path.join(probe_dir, "metadata.json")
-    if not os.path.exists(metadata_path):
-        raise FileNotFoundError(f"Could not find metadata.json in probe directory: {probe_dir}")
-    with open(metadata_path, 'r') as f:
-        train_metadata = json.load(f)
+    train_metadata = load_metadata(probe_dir)
     
     logger.print("--- Loaded Training Metadata ---")
     logger.print(json.dumps(train_metadata, indent=2))
@@ -253,7 +106,12 @@ def test_and_save_synthetic_probes(
     adjectives_to_include = train_metadata.get('adjectives_trained', []) if filter_to_trained_adjectives else None
     if filter_to_trained_adjectives and adjectives_to_include:
         logger.print(f"Filtering to trained adjectives: {adjectives_to_include}")
-    adjective_to_data = load_synthetic_data(synthetic_data_dir, include_adjectives=adjectives_to_include)
+    topical_data, _ = load_synthetic_concept_data(synthetic_data_dir, adjectives_to_include or [], exclude_refusals=True)
+    # Convert to expected format (prompt, response, None)
+    adjective_to_data = {
+        concept: [(prompt, response, None) for prompt, response in examples]
+        for concept, examples in topical_data.items()
+    }
     
     logger.print(f"\nLoading {num_ultrachat_test_samples} conversations from UltraChat ({ultrachat_split} split) for negative testing...")
     ultrachat_test_samples = []
@@ -363,7 +221,7 @@ def test_and_save_synthetic_probes(
 
     # 5. Save Final Metadata and Test Results
     test_metadata = {
-        "test_run_date_time": date_time,
+        "test_run_date_time": datetime.now().strftime("%Y%m%d_%H%M%S"),
         "source_probe_dir": probe_dir,
         "source_training_metadata": train_metadata,
         "batch_size": batch_size,
@@ -374,8 +232,7 @@ def test_and_save_synthetic_probes(
         "filter_to_trained_adjectives": filter_to_trained_adjectives,
         "adjectives_used_for_testing": list(adjective_to_data.keys())
     }
-    with open(os.path.join(directory, "metadata.json"), "w") as f:
-        json.dump(test_metadata, f, indent=2)
+    save_metadata(directory, test_metadata)
         
     with open(os.path.join(directory, "test_results.json"), "w") as f:
         json.dump(all_test_results, f, indent=2)

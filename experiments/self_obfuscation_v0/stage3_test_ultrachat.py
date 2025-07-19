@@ -20,8 +20,8 @@ import torch
 import argparse
 from datasets import load_dataset
 from tqdm import tqdm
-from experiments.self_obfuscation_main.utils_testing import test_probe_on_prompts_responses
-from experiments.self_obfuscation_main.utils_misc import load_local_model, load_word_to_probe_dict
+from experiments.self_obfuscation_v0.utils_testing import test_probe_on_prompts_responses
+from experiments.self_obfuscation_v0.utils_misc import load_local_model, load_word_to_probe_dict
 from obf_reps.logging import CSVTXTLogger
 
 # Valid splits: train_sft, test_sft, train_gen, test_gen

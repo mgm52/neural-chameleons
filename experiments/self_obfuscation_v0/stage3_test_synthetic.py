@@ -21,8 +21,8 @@ import json
 import torch
 import argparse
 
-from experiments.self_obfuscation_main.utils_misc import load_local_model, load_word_to_probe_dict
-from experiments.self_obfuscation_main.utils_testing import test_probe_on_model, check_pregen_data_content, test_probe_on_most_regular_pregen_data
+from experiments.self_obfuscation_v0.utils_misc import load_local_model, load_word_to_probe_dict
+from experiments.self_obfuscation_v0.utils_testing import test_probe_on_model, check_pregen_data_content, test_probe_on_most_regular_pregen_data
 
 def run_test_suite(model, word_to_probe_dict, words, logger, model_details, pregen_data, target_layers, generate_new_responses=False):
     logger.print(f"\nTESTING CHECKPOINT...")
@@ -54,7 +54,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Test a model checkpoint on probe tasks')
     parser.add_argument('--model_checkpoint', type=str, default="experiments/self_obfuscation_main/outputs/model_checkpoints/20250228_053913_gemma_2_9b_instruct_plr_4e-05_l12_logistic_ptwf_0.5_ps_400_ms_200_mlr_2e-06_bl_0.1_good", help='Path to model checkpoint (or none)')
     parser.add_argument('--probe_checkpoints', type=str, default="experiments/self_obfuscation_main/outputs/probe_checkpoints/20250626_190400_logistic_12_finetuned", help='Path to probe checkpoints (or none)')
-    parser.add_argument('--test_data', type=str, default="datasets/self_obfuscation/outputs/conditional_test_data_gemma_2_9b_instruct_20250226_010745.json", help='Path to test data JSON')
+    parser.add_argument('--test_data', type=str, default="data/self_obfuscation/outputs/conditional_test_data_gemma_2_9b_instruct_20250226_010745.json", help='Path to test data JSON')
     parser.add_argument('--model_name', type=str, default="gemma_2_9b_instruct",
                        help='Model name to use (default: gemma_2_9b_instruct)')
     parser.add_argument("--gen_new_responses", type=bool, default=False)

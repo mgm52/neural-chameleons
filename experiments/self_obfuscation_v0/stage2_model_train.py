@@ -27,9 +27,9 @@ import torch
 import argparse
 import os
 
-from experiments.self_obfuscation_main.utils_misc import generate_twoword_data_for_words, load_local_model, generate_data_for_words, load_word_to_probe_dict, dict_value_to_key
-from experiments.self_obfuscation_main.utils_training import words_data_to_probes, get_model_training_data, train_with_gradient_context, plot_training_losses, plot_layer_norms
-from experiments.self_obfuscation_main.utils_testing import test_probe_on_model
+from experiments.self_obfuscation_v0.utils_misc import generate_twoword_data_for_words, load_local_model, generate_data_for_words, load_word_to_probe_dict, dict_value_to_key
+from experiments.self_obfuscation_v0.utils_training import words_data_to_probes, get_model_training_data, train_with_gradient_context, plot_training_losses, plot_layer_norms
+from experiments.self_obfuscation_v0.utils_testing import test_probe_on_model
 
 def train_and_test_conditional_model(
     model_name="gemma_2_9b_instruct",
@@ -62,9 +62,9 @@ def train_and_test_conditional_model(
         logger = CSVTXTLogger(print_logs_to_console=False)
 
     # Construct full paths
-    test_data_path = f"datasets/self_obfuscation/outputs/{test_data_json}"
+    test_data_path = f"data/self_obfuscation/outputs/{test_data_json}"
     probe_checkpoints_path = f"experiments/self_obfuscation_main/outputs/probe_checkpoints/{probe_checkpoints}"
-    ultrachat_training_path = f"datasets/self_obfuscation/outputs/{ultrachat_training_json}"
+    ultrachat_training_path = f"data/self_obfuscation/outputs/{ultrachat_training_json}"
 
     # LOADING
     # Load pre-generated test data
@@ -116,7 +116,7 @@ def train_and_test_conditional_model(
     #     logger.print(f"\nSkipping pre-training testing...")
     
     # MODEL TRAINING
-    training_data_path = f"datasets/self_obfuscation/outputs/{training_data_json}"
+    training_data_path = f"data/self_obfuscation/outputs/{training_data_json}"
     if len(training_data_path) > 0 and os.path.exists(training_data_path):
         # Load previously generated training data
         logger.print(f"Loading training data from {training_data_path}...")

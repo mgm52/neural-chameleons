@@ -9,7 +9,7 @@ import matplotlib.patheffects as PathEffects
 ########################################################
 # 1. Model loading code
 ########################################################
-from experiments.self_obfuscation_main.utils_misc import load_local_model
+from experiments.self_obfuscation_v0.utils_misc import load_local_model
 
 # -- Create two models: untrained and checkpointed --
 #   1. Untrained

@@ -17,6 +17,8 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 
 import os
 import torch
+import gc
+import psutil
 
 def cut_to_first_sentence(text, minimum_cut_length=-1):
     """Cut a text to the first sentence. Which may end in ., !, ?, or newline."""
@@ -107,8 +109,8 @@ def split_dataset(dataset, train_ratio, val_ratio, test_ratio=0.0):
 # For loading old probes...
 class OldProbeUnpickler(pickle.Unpickler):
     PREFIX_MAP = {
-        "conditional_experiment.conditional_training": "experiments.self_obfuscation_main.utils_training",
-        "conditional_experiment": "experiments.self_obfuscation_main",
+        "conditional_experiment.conditional_training": "experiments.self_obfuscation_v0.utils_training",
+        "conditional_experiment": "experiments.self_obfuscation_v0",
     }
 
     def find_class(self, module, name):
@@ -712,3 +714,27 @@ def dict_value_to_key(value: any, dictionary: dict) -> any:
         if val == value:
             return key
     raise ValueError("Value not found in dictionary mapping") 
+
+
+def get_memory_usage() -> float:
+    """Get current memory usage in MB."""
+    process = psutil.Process()
+    memory_info = process.memory_info()
+    return memory_info.rss / 1024 / 1024
+
+
+def print_memory_usage(stage: str, logger=None) -> None:
+    """Print current memory usage."""
+    memory_mb = get_memory_usage()
+    message = f"Memory usage at {stage}: {memory_mb:.1f} MB"
+    if logger:
+        logger.print(message)
+    else:
+        print(message)
+
+
+def cleanup_memory() -> None:
+    """Force garbage collection and clear GPU cache if available."""
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache() 

@@ -7,7 +7,7 @@ This script tests each concept probe on:
 
 INPUTS:
 - Trained concept probes from experiments/self_obfuscation_concepts/outputs/probe_checkpoints/
-- Test data from datasets/synthetic_data/outputs/
+- Test data from data/synthetic_data/outputs/
 
 OUTPUTS:
 - Test results CSV files
@@ -43,8 +43,8 @@ try:
 except ImportError:
     HAS_MATPLOTLIB = False
 
-from experiments.self_obfuscation_main.utils_misc import load_local_model, load_old_probe
-from experiments.self_obfuscation_main.utils_training import ResponseProbeDataModule
+from experiments.self_obfuscation_v0.utils_misc import load_local_model, load_old_probe
+from experiments.self_obfuscation_v0.utils_training import ResponseProbeDataModule
 from obf_reps.logging import CSVTXTLogger
 from obf_reps.metrics import (
     LogisticRegressionMetric,
@@ -357,7 +357,7 @@ def main():
     parser.add_argument(
         "--data_dir",
         type=str,
-        default="datasets/synthetic_data/outputs/20250629_134811",
+        default="data/synthetic_data/outputs/20250629_134811",
         help="Path to test data directory",
     )
     parser.add_argument(

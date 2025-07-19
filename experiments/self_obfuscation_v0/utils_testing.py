@@ -7,8 +7,8 @@ from obf_reps.models.hf import HFHardPrompted
 from obf_reps.metrics import ObfMetric
 from typing import List, Literal, Optional, Tuple
 
-from experiments.self_obfuscation_main.utils_misc import DontThinkPleasePromptFormatter, sanitize_response
-from experiments.self_obfuscation_main.utils_training import ResponseProbeDataModule
+from experiments.self_obfuscation_v0.utils_misc import DontThinkPleasePromptFormatter, sanitize_response
+from experiments.self_obfuscation_v0.utils_training import ResponseProbeDataModule
 
 def check_tokenization_roundtrip(text, tokenizer):
     """
