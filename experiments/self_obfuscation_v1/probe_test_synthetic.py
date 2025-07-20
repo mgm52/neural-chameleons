@@ -46,10 +46,12 @@ from experiments.self_obfuscation_v0.utils_misc import load_local_model
 
 # Import utility modules
 from experiments.self_obfuscation_v1.utils_data import (
-    load_synthetic_concept_data, split_data, load_ultrachat_sample, 
+    split_data, load_ultrachat_sample, 
     extract_prompt_response_from_conversation, cut_to_first_sentence, 
     cut_to_first_and_last_sentence
 )
+from data.self_obfuscation_v1_synthetic.load_synthetic_data import load_synthetic_data
+from data.data import PosNegDataByCategory
 from experiments.self_obfuscation_v1.utils_evaluation import (
     get_probe_scores_with_data, get_top_bottom_examples, 
     bootstrap_tpr_at_fpr_with_thresholds
@@ -106,11 +108,20 @@ def test_and_save_synthetic_probes(
     adjectives_to_include = train_metadata.get('adjectives_trained', []) if filter_to_trained_adjectives else None
     if filter_to_trained_adjectives and adjectives_to_include:
         logger.print(f"Filtering to trained adjectives: {adjectives_to_include}")
-    topical_data, _ = load_synthetic_concept_data(synthetic_data_dir, adjectives_to_include or [], exclude_refusals=True)
+    
+    # Load using the new data loading approach
+    topical_data_dict = load_synthetic_data(
+        data_dir=synthetic_data_dir,
+        response_type="topical",
+        manual_path_confirm=False,
+        exclude_refusals=True,
+        adjectives=adjectives_to_include
+    )
+    
     # Convert to expected format (prompt, response, None)
     adjective_to_data = {
-        concept: [(prompt, response, None) for prompt, response in examples]
-        for concept, examples in topical_data.items()
+        concept: [(pr.prompt, pr.response, None) for pr in prompt_resps]
+        for concept, prompt_resps in topical_data_dict.items()
     }
     
     logger.print(f"\nLoading {num_ultrachat_test_samples} conversations from UltraChat ({ultrachat_split} split) for negative testing...")

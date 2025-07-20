@@ -57,7 +57,9 @@ import bitsandbytes as bnb
 
 from experiments.self_obfuscation_v0.utils_misc import load_local_model
 from experiments.self_obfuscation_v1.utils_evaluation import plot_training_curves
-from experiments.self_obfuscation_v1.utils_data import load_ultrachat_data, load_synthetic_concept_data
+from experiments.self_obfuscation_v1.utils_data import load_ultrachat_data
+from data.self_obfuscation_v1_synthetic.load_synthetic_data import load_synthetic_data
+from data.data import PosNegDataByCategory
 from experiments.self_obfuscation_v1.utils_setup import setup_experiment_directory, save_metadata, create_experiment_metadata
 
 def load_concept_probes(probe_checkpoints_path: str) -> Dict[str, object]:
@@ -592,7 +594,31 @@ def train_concept_self_obfuscation_model(
     logger.print(f"Available concepts with probes: {available_concepts}")
     
     logger.print(f"Loading synthetic concept data from: {synthetic_data_dir}")
-    concept_to_topical_data, concept_to_vanilla_data = load_synthetic_concept_data(synthetic_data_dir, available_concepts)
+    # Load using the new data loading approach
+    topical_data_dict = load_synthetic_data(
+        data_dir=synthetic_data_dir,
+        response_type="topical",
+        manual_path_confirm=False,
+        exclude_refusals=True,
+        adjectives=available_concepts
+    )
+    vanilla_data_dict = load_synthetic_data(
+        data_dir=synthetic_data_dir,
+        response_type="vanilla", 
+        manual_path_confirm=False,
+        exclude_refusals=True,
+        adjectives=available_concepts
+    )
+    
+    # Convert to the format expected by process_concept_training_data
+    concept_to_topical_data = {
+        concept: [(pr.prompt, pr.response) for pr in prompt_resps]
+        for concept, prompt_resps in topical_data_dict.items()
+    }
+    concept_to_vanilla_data = {
+        concept: [(pr.prompt, pr.response) for pr in prompt_resps]
+        for concept, prompt_resps in vanilla_data_dict.items()
+    }
     
     logger.print(f"Loading UltraChat data from: {ultrachat_json}")
     ultrachat_data = load_ultrachat_data(ultrachat_json)

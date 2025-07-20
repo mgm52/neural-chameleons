@@ -39,8 +39,10 @@ from experiments.self_obfuscation_v0.utils_misc import load_local_model, get_mem
 from experiments.self_obfuscation_v0.utils_training import train_probe
 
 # Import utility modules
-from experiments.self_obfuscation_v1.utils_data import load_synthetic_concept_data, split_data
+from experiments.self_obfuscation_v1.utils_data import split_data
 from experiments.self_obfuscation_v1.utils_setup import setup_experiment_directory, setup_logger, save_metadata, create_experiment_metadata
+from data.self_obfuscation_v1_synthetic.load_synthetic_data import load_synthetic_data
+from data.data import PosNegDataByCategory
 
 
 def train_probe_with_plotting(model: HFHardPrompted, pos_samples: List[Tuple[str, str, List[int]]], neg_samples: List[Tuple[str, str, List[int]]], logger, target_layers: List[int], probe_type: str = "mlp", learning_rate: float = 5e-4, batch_size: int = 64, num_epochs: int = 5, adjective: str = "unknown"):
@@ -151,11 +153,20 @@ def train_synthetic_probes(
     # 3. Load and Prepare Synthetic Data
     logger.print(f"\nLoading synthetic data from {synthetic_data_dir}...")
     print_memory_usage("before loading synthetic data", logger)
-    topical_data, _ = load_synthetic_concept_data(synthetic_data_dir, include_probe_names, exclude_refusals=True)
+    
+    # Load using the new data loading approach
+    topical_data_dict = load_synthetic_data(
+        data_dir=synthetic_data_dir,
+        response_type="topical",
+        manual_path_confirm=False,
+        exclude_refusals=True,
+        adjectives=include_probe_names if include_probe_names else None
+    )
+    
     # Convert to expected format (prompt, response, None)
     adjective_to_data = {
-        concept: [(prompt, response, None) for prompt, response in examples]
-        for concept, examples in topical_data.items()
+        concept: [(pr.prompt, pr.response, None) for pr in prompt_resps]
+        for concept, prompt_resps in topical_data_dict.items()
     }
     all_adjectives = sorted(list(adjective_to_data.keys()))
     target_layers_list = [int(layer) for layer in target_layers.split(",")]
