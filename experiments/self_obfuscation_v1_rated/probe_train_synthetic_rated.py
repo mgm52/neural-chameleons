@@ -37,133 +37,53 @@ from obf_reps.logging import CSVTXTLogger
 from obf_reps.models.hf import HFHardPrompted
 from experiments.self_obfuscation_v0.utils_misc import load_local_model, get_memory_usage, print_memory_usage, cleanup_memory
 from experiments.self_obfuscation_v0.utils_training import train_probe
+from data.self_obfuscation_v1_synthetic_rating.load_rated_data import load_rated_data
+from data.data import PosNegDataByCategory
 
-def load_mega_dataset(dataset_path: str, use_topical_ratings: bool = True) -> List[Dict]:
+def load_mega_dataset(dataset_path: str = None, use_topical_ratings: bool = True):
     """
-    Loads the evaluated mega dataset from JSON file.
+    Loads the evaluated mega dataset using the new data loader.
     
     Args:
-        dataset_path: Path to the mega dataset JSON file
+        dataset_path: Path to the mega dataset JSON file (optional, uses most recent if None)
         use_topical_ratings: Whether to use topical_response ratings or vanilla_response ratings
     
     Returns:
-        List of dataset items
+        List of PromptRespRating objects
     """
-    with open(dataset_path, 'r', encoding='utf-8') as f:
-        data = json.load(f)
+    response_type = "topical" if use_topical_ratings else "vanilla"
     
-    print(f"Loaded {len(data)} samples from {dataset_path}")
-    return data
+    # If specific path provided, extract just the filename pattern
+    if dataset_path:
+        dataset_name = Path(dataset_path).name
+    else:
+        dataset_name = r"mega_dataset_evaluated_.*\.json$"
+    
+    return load_rated_data(
+        dataset_name=dataset_name,
+        response_type=response_type,
+        manual_path_confirm=False,  # Don't require manual confirmation in script
+        exclude_refusals=True,
+        exclude_missing_ratings=True
+    )
 
-def extract_adjective_data(data: List[Dict], adjective: str, positive_threshold: float = 0.75, 
-                          negative_threshold: float = 0.25, use_topical_ratings: bool = True,
-                          exclude_refusals: bool = True) -> Tuple[List[Tuple[str, str, None]], List[Tuple[str, str, None]]]:
+def create_pos_neg_data(data, positive_threshold: float = 0.75, negative_threshold: float = 0.25) -> PosNegDataByCategory:
     """
-    Extract positive and negative samples for a specific adjective based on normalized ratings.
+    Create PosNegDataByCategory using thresholds.
     
     Args:
-        data: List of dataset items
-        adjective: The adjective to extract data for
+        data: List of PromptRespRating objects
         positive_threshold: Threshold for positive samples (>= this value)
         negative_threshold: Threshold for negative samples (<= this value)
-        use_topical_ratings: Whether to use topical_response ratings or vanilla_response ratings
-        exclude_refusals: Whether to exclude refusal samples
     
     Returns:
-        Tuple of (positive_samples, negative_samples)
+        PosNegDataByCategory object with adjectives as categories
     """
-    positive_samples = []
-    negative_samples = []
-    
-    # Determine which ratings to use
-    prompt_ratings_key = "prompt_normalized_ratings"
-    response_ratings_key = "topical_response_normalized_ratings" if use_topical_ratings else "vanilla_response_normalized_ratings"
-    response_key = "topical_response" if use_topical_ratings else "vanilla_response"
-    refusal_key = "is_topical_response_refusal" if use_topical_ratings else "is_vanilla_response_refusal"
-    
-    for item in data:
-        # Skip refusals if requested
-        if exclude_refusals and item.get(refusal_key, False):
-            continue
-            
-        # Skip if we don't have the required ratings
-        if (prompt_ratings_key not in item or 
-            response_ratings_key not in item or 
-            adjective not in item[prompt_ratings_key] or 
-            adjective not in item[response_ratings_key]):
-            continue
-            
-        prompt = item.get("prompt")
-        response = item.get(response_key)
-        
-        if not prompt:
-            print(f"Skipping item because 'prompt' is missing or empty. Value: {prompt}")
-        if not response:
-            print(f"Skipping item because 'response' is missing or empty. Value: {response}")
-        if adjective not in item.get(prompt_ratings_key, {}):
-            print(f"Skipping item because it lacks a prompt rating for '{adjective}' under key '{prompt_ratings_key}'. "
-                f"Available ratings: {item.get(prompt_ratings_key, {})}")
-        if adjective not in item.get(response_ratings_key, {}):
-            print(f"Skipping item because it lacks a response rating for '{adjective}' under key '{response_ratings_key}'. "
-                f"Available ratings: {item.get(response_ratings_key, {})}")
-
-        if item[prompt_ratings_key][adjective] is None:
-            print(f"Skipping item because it lacks a prompt rating for '{adjective}' under key '{prompt_ratings_key}'. "
-                f"Available ratings: {item.get(prompt_ratings_key, {})}")
-        if item[response_ratings_key][adjective] is None:
-            print(f"Skipping item because it lacks a response rating for '{adjective}' under key '{response_ratings_key}'. "
-                f"Available ratings: {item.get(response_ratings_key, {})}")
-
-        # Final check to actually skip processing
-        if (
-            not prompt or
-            not response or
-            adjective not in item.get(prompt_ratings_key, {}) or
-            adjective not in item.get(response_ratings_key, {}) or
-            item[prompt_ratings_key][adjective] is None or
-            item[response_ratings_key][adjective] is None
-        ):
-            continue
-            
-        # Get ratings for this adjective
-        prompt_rating = item[prompt_ratings_key][adjective]
-        response_rating = item[response_ratings_key][adjective]
-        
-        sample_tuple = (prompt, response, None)
-        
-        # Let's just concern ourselves with the response rating for now
-        #print(f"Got prompt rating: {prompt_rating} and response rating: {response_rating} for adjective {adjective}")
-        if response_rating >= positive_threshold:
-            positive_samples.append(sample_tuple)
-        elif response_rating <= negative_threshold:
-            negative_samples.append(sample_tuple)
-        # Samples in between thresholds are ignored
-    
-    return positive_samples, negative_samples
-
-def get_all_adjectives(data: List[Dict], use_topical_ratings: bool = True) -> List[str]:
-    """
-    Get all adjectives present in the dataset.
-    
-    Args:
-        data: List of dataset items
-        use_topical_ratings: Whether to use topical_response ratings or vanilla_response ratings
-    
-    Returns:
-        List of adjective names
-    """
-    adjectives = set()
-    
-    prompt_ratings_key = "prompt_normalized_ratings"
-    response_ratings_key = "topical_response_normalized_ratings" if use_topical_ratings else "vanilla_response_normalized_ratings"
-    
-    for item in data:
-        if prompt_ratings_key in item:
-            adjectives.update(item[prompt_ratings_key].keys())
-        if response_ratings_key in item:
-            adjectives.update(item[response_ratings_key].keys())
-    
-    return sorted(list(adjectives))
+    return PosNegDataByCategory.from_ratings(
+        data, 
+        max_neg_rating=negative_threshold, 
+        min_pos_rating=positive_threshold
+    )
 
 def split_data(data_list: list, test_size: int, seed: int) -> Tuple[list, list]:
     """Splits a list of data into training and testing sets."""
@@ -177,24 +97,24 @@ def split_data(data_list: list, test_size: int, seed: int) -> Tuple[list, list]:
     train_set = data_list[actual_test_size:]
     return train_set, test_set
 
-def train_probe_with_plotting(model: HFHardPrompted, pos_samples: List[Tuple[str, str, List[int]]], neg_samples: List[Tuple[str, str, List[int]]], logger, target_layers: List[int], probe_type: str = "mlp", learning_rate: float = 5e-4, batch_size: int = 64, num_epochs: int = 5, adjective: str = "unknown"):
+def train_probe_with_plotting(model: HFHardPrompted, pos_neg_data, logger, target_layers: List[int], probe_type: str = "mlp", learning_rate: float = 5e-4, batch_size: int = 64, num_epochs: int = 5, adjective: str = "unknown"):
     """Train probe using the existing probe training infrastructure."""
     from experiments.self_obfuscation_v0.utils_training import ResponseProbeDataModule
     from obf_reps.metrics import MetricConfig, MLPMetric, LogisticRegressionMetric
     
     print_memory_usage(f"start of probe training for {adjective}", logger)
     
-    logger.optional_print(f"pos_samples (len: {len(pos_samples)}): {pos_samples}")
-    logger.optional_print(f"neg_samples (len: {len(neg_samples)}): {neg_samples}")
+    logger.optional_print(f"pos_samples (len: {len(pos_neg_data.pos_dataset)}): {pos_neg_data.pos_dataset}")
+    logger.optional_print(f"neg_samples (len: {len(pos_neg_data.neg_dataset)}): {pos_neg_data.neg_dataset}")
     
     print_memory_usage(f"after loading samples for {adjective}", logger)
 
     logger.optional_print(f"Creating data module...")
     # Create the data module
-    # Probe trains on input TEXT and response TOKEN IDS
+    # Probe trains on input TEXT and response TEXT
     data_module = ResponseProbeDataModule(
-        [(p, t if t is not None else r) for p, r, t in pos_samples],
-        [(p, t if t is not None else r) for p, r, t in neg_samples]
+        [(sample.prompt, sample.response) for sample in pos_neg_data.pos_dataset],
+        [(sample.prompt, sample.response) for sample in pos_neg_data.neg_dataset]
     )
 
     logger.optional_print(f"Configuring probe...")
@@ -285,52 +205,46 @@ def train_labelled_probes(
     print_memory_usage("before loading mega dataset", logger)
     data = load_mega_dataset(dataset_path, use_topical_ratings)
     
-    # Get all adjectives or use specified ones
+    # 4. Create PosNegDataByCategory using thresholds
+    logger.print(f"\nCreating pos/neg data with thresholds {positive_threshold}/{negative_threshold}...")
+    pos_neg_data_by_category = create_pos_neg_data(data, positive_threshold, negative_threshold)
+    
+    # Get all adjectives or filter by specified ones
+    all_adjectives = list(pos_neg_data_by_category.categories.keys())
     if include_adjectives:
-        all_adjectives = [adj for adj in include_adjectives if adj in get_all_adjectives(data, use_topical_ratings)]
+        all_adjectives = [adj for adj in include_adjectives if adj in all_adjectives]
         logger.print(f"Using specified adjectives: {all_adjectives}")
     else:
-        all_adjectives = get_all_adjectives(data, use_topical_ratings)
         logger.print(f"Found {len(all_adjectives)} adjectives in dataset")
     
     target_layers_list = [int(layer) for layer in target_layers.split(",")]
     print_memory_usage("after loading mega dataset", logger)
     
-    # 4. Collect Sample Counts for All Adjectives (including train/test splits)
+    # 5. Collect Sample Counts for All Adjectives
     sample_counts = {}
     logger.print(f"\nCollecting sample counts for all adjectives...")
     
     for adjective in all_adjectives:
-        pos_samples, neg_samples = extract_adjective_data(
-            data, adjective, positive_threshold, negative_threshold, 
-            use_topical_ratings, exclude_refusals=True
-        )
-        
-        # Calculate actual training samples after split and balancing
-        if len(pos_samples) >= min_samples_per_class and len(neg_samples) >= min_samples_per_class:
-            # Split data into train/test (same logic as in training loop)
-            if len(pos_samples) > num_test_samples and len(neg_samples) > num_test_samples:
-                pos_train, _ = split_data(pos_samples, num_test_samples, seed)
-                neg_train, _ = split_data(neg_samples, num_test_samples, seed)
-            else:
-                pos_train = pos_samples
-                neg_train = neg_samples
+        if adjective in pos_neg_data_by_category.categories:
+            pos_neg_data = pos_neg_data_by_category.categories[adjective]
+            pos_count = len(pos_neg_data.pos_dataset)
+            neg_count = len(pos_neg_data.neg_dataset)
             
-            # Balance training data (same logic as in training loop)
-            min_train_size = min(len(pos_train), len(neg_train))
-            actual_pos_training = min_train_size
-            actual_neg_training = min_train_size
+            sample_counts[adjective] = {
+                "positive_samples": pos_count,
+                "negative_samples": neg_count,
+                "meets_min_threshold": pos_count >= min_samples_per_class and neg_count >= min_samples_per_class,
+                "positive_training_samples": pos_count,  # Already balanced by PosNegData
+                "negative_training_samples": neg_count
+            }
         else:
-            actual_pos_training = 0
-            actual_neg_training = 0
-        
-        sample_counts[adjective] = {
-            "positive_samples": len(pos_samples),
-            "negative_samples": len(neg_samples),
-            "meets_min_threshold": len(pos_samples) >= min_samples_per_class and len(neg_samples) >= min_samples_per_class,
-            "positive_training_samples": actual_pos_training,
-            "negative_training_samples": actual_neg_training
-        }
+            sample_counts[adjective] = {
+                "positive_samples": 0,
+                "negative_samples": 0,
+                "meets_min_threshold": False,
+                "positive_training_samples": 0,
+                "negative_training_samples": 0
+            }
     
     # Save sample counts JSON before training begins
     sample_counts_path = os.path.join(directory, "sample_counts.json")
@@ -338,45 +252,30 @@ def train_labelled_probes(
         json.dump(sample_counts, f, indent=2)
     logger.print(f"Saved sample counts to: {sample_counts_path}")
     
-    # 5. Train Probes
+    # 6. Train Probes
     trained_adjectives = []
     for i, adjective in enumerate(all_adjectives):
         logger.print(f"\n--- Processing adjective '{adjective}' ({i+1}/{len(all_adjectives)}) ---")
         
-        # Extract positive and negative samples
-        pos_samples, neg_samples = extract_adjective_data(
-            data, adjective, positive_threshold, negative_threshold, 
-            use_topical_ratings, exclude_refusals=True
-        )
+        # Get the PosNegData for this adjective
+        if adjective not in pos_neg_data_by_category.categories:
+            logger.print(f"No data found for '{adjective}'. Skipping.")
+            continue
+            
+        pos_neg_data = pos_neg_data_by_category.categories[adjective]
+        pos_count = len(pos_neg_data.pos_dataset)
+        neg_count = len(pos_neg_data.neg_dataset)
         
-        logger.print(f"Found {len(pos_samples)} positive and {len(neg_samples)} negative samples for '{adjective}'")
+        logger.print(f"Found {pos_count} positive and {neg_count} negative samples for '{adjective}'")
         
         # Check if we have enough samples
-        if len(pos_samples) < min_samples_per_class or len(neg_samples) < min_samples_per_class:
+        if pos_count < min_samples_per_class or neg_count < min_samples_per_class:
             logger.print(f"Insufficient samples for '{adjective}' (need at least {min_samples_per_class} per class). Skipping.")
             continue
-        
-        # Split data into train/test
-
-        if len(pos_samples) > num_test_samples and len(neg_samples) > num_test_samples:
-            pos_train, _ = split_data(pos_samples, num_test_samples, seed)
-            neg_train, _ = split_data(neg_samples, num_test_samples, seed)
-        else:
-            pos_train = pos_samples
-            neg_train = neg_samples
-            logger.print(f"WARNING: Not enough samples for testing '{adjective}' (need at least {num_test_samples} per class). Using all samples.")
-        
-        
-        # Balance training data
-        min_train_size = min(len(pos_train), len(neg_train))
-        pos_train = random.sample(pos_train, min_train_size)
-        neg_train = random.sample(neg_train, min_train_size)
-        
-        logger.print(f"Training with {len(pos_train)} pos / {len(neg_train)} neg samples.")
 
         # Train the probe
         probe = train_probe_with_plotting(
-            model=model, pos_samples=pos_train, neg_samples=neg_train, logger=logger,
+            model=model, pos_neg_data=pos_neg_data, logger=logger,
             target_layers=target_layers_list, probe_type=probe_type,
             learning_rate=learning_rate, batch_size=batch_size, num_epochs=num_epochs,
             adjective=adjective
@@ -400,11 +299,11 @@ def train_labelled_probes(
         trained_adjectives.append(adjective)
         
         # Clean up after each probe to free memory
-        del probe, pos_train, neg_train, pos_samples, neg_samples
+        del probe, pos_neg_data
         cleanup_memory()
         print_memory_usage(f"after completing probe {i+1}/{len(all_adjectives)} ({adjective})", logger)
 
-    # 6. Save Final Metadata
+    # 7. Save Final Metadata
     metadata = {
         "train_run_date_time": date_time,
         "model_name": model_name,
