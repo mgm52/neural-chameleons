@@ -8,12 +8,20 @@ class PromptResp:
     def __init__(self, prompt: str, response: str):
         self.prompt = prompt
         self.response = response
+    def __str__(self):
+        return f"Prompt: {self.prompt}\nResponse: {self.response}"
+    def __repr__(self):
+        return self.__str__()
 
 class PromptRespRating:
     def __init__(self, prompt: str, response: str, ratings: Dict[str, float]):
         self.prompt = prompt
         self.response = response
         self.ratings = ratings
+    def __str__(self):
+        return f"Prompt: {self.prompt}\nResponse: {self.response}\nRatings: {self.ratings}"
+    def __repr__(self):
+        return self.__str__()
 
 ### DATASETS ###
 class PosNegData:
@@ -54,12 +62,13 @@ class PosNegDataByCategory:
         for rating_obj in ratings_list:
             prompt_response = PromptResp(rating_obj.prompt, rating_obj.response)
             for category, rating_value in rating_obj.ratings.items():
-                if rating_value <= max_neg_rating:
-                    categories[category].neg_dataset.append(prompt_response)
-                elif rating_value >= min_pos_rating:
-                    categories[category].pos_dataset.append(prompt_response)
+                if rating_value is not None:  # Skip None ratings
+                    if rating_value <= max_neg_rating:
+                        categories[category].neg_dataset.append(prompt_response)
+                    elif rating_value >= min_pos_rating:
+                        categories[category].pos_dataset.append(prompt_response)
         
         for category in categories:
-            categories[category].__balance_to_same_len(shuffle=shuffle)
+            categories[category]._PosNegData__balance_to_same_len(shuffle=shuffle)
         
         return cls(categories)
