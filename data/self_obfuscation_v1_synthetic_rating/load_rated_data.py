@@ -88,6 +88,7 @@ def load_rated_data(
         # Check for refusals if excluding them
         if exclude_refusals and entry.get(refusal_key, False):
             skipped_refusals += 1
+
             continue
         
         # Check for missing ratings if excluding them
@@ -124,6 +125,11 @@ def load_rated_data(
 
 
 if __name__ == "__main__":
+
+    ultrachat_data = load_rated_data(dataset_name=r"ultrachat_mega_dataset_.*\.json$", response_type="vanilla")
+    print(f"Loaded {len(ultrachat_data)} ultrachat entries")
+    print(ultrachat_data[0])
+
     # Example usage
     print("Loading topical synthetic data...")
     topical_data = load_rated_data(response_type="topical")
