@@ -59,6 +59,7 @@ from experiments.self_obfuscation_v1.utils_evaluation import plot_training_curve
 from data.self_obfuscation_v1_synthetic_rating.load_rated_data import load_rated_data
 from data.data import PosNegDataByCategory, PromptRespRating
 from experiments.self_obfuscation_v1.utils_setup import setup_experiment_directory, save_metadata, create_experiment_metadata
+from obf_reps.models.hf import HFHardPromptedWithSelectableLayers
 
 # Concept synonyms dictionary - each concept maps to a list of synonyms including the original
 CONCEPT_SYNONYMS = {
@@ -451,9 +452,8 @@ def process_concept_training_data(
     
     return data_splits
 
-
 def concept_training_loop(
-    model,
+    model: HFHardPromptedWithSelectableLayers,
     label_1_data: List,
     label_0_data: List,
     num_epochs: int,
@@ -487,16 +487,19 @@ def concept_training_loop(
     
     step_num = 0
     total_steps = (len(label_1_data) + len(label_0_data)) * num_epochs
+    epoch_data = label_1_data + label_0_data
     pbar = tqdm(total=total_steps, desc="Enhanced Training Progress")
     
+    unique_epoch_data = len(list(set(epoch_data)))
+    logger.print(f"Unique data items out of total: {unique_epoch_data} / {len(epoch_data)}")
+
     for epoch in range(num_epochs):
         logger.print(f"Epoch {epoch}...")
         
         # Combine and shuffle data
-        epoch_data = [(item, "label_1") for item in label_1_data] + [(item, "label_0") for item in label_0_data]
         random.shuffle(epoch_data)
         
-        for data_item, label_type in epoch_data:
+        for data_item in epoch_data:
             with torch.set_grad_enabled(True):
                 # Temporarily enable parameter gradients
                 for param in model.parameters():
@@ -685,7 +688,6 @@ def train_concept_self_obfuscation_model(
     max_neg_rating: float = 0.25, # Maximum rating threshold for negative samples
     min_pos_rating: float = 0.75, # Minimum rating threshold for positive samples
     custom_folder_name: str = "",
-    save_model_checkpoint: bool = False,
     logger = None
 ):
     """Train a model to perform self-obfuscation against concept probes."""
@@ -780,7 +782,7 @@ def train_concept_self_obfuscation_model(
     }
     
     # Set up experiment directory
-    output_dir_base = "experiments/self_obfuscation_concepts/outputs/model_checkpoints"
+    output_dir_base = os.path.join(os.path.dirname(__file__), "outputs", "model_checkpoints")
     additional_suffix = "concepts"
     
     checkpoint_path = setup_experiment_directory(
@@ -823,15 +825,12 @@ def train_concept_self_obfuscation_model(
     )
     
     # Save model checkpoint
-    if save_model_checkpoint:
-        logger.print(f"Saving model checkpoint to {checkpoint_path}...")
-        trained_model.model.save_pretrained(checkpoint_path)
+    logger.print(f"Saving model checkpoint to {checkpoint_path}...")
+    trained_model.model.save_pretrained(checkpoint_path)
     
     # Save training metadata
     metadata = create_experiment_metadata(
         experiment_type="model_training",
-        model_name=model_name,
-        model_checkpoint=model_checkpoint,
         **model_details
     )
     save_metadata(checkpoint_path, metadata, filename="model_training_metadata.json")
@@ -891,8 +890,6 @@ if __name__ == "__main__":
                       help='Minimum rating threshold for positive samples (default: 0.75)')
     parser.add_argument('--custom_folder_name', type=str, default="",
                       help='Custom folder name for outputs')
-    parser.add_argument('--save_model_checkpoint', action='store_true',
-                      help='Whether to save the model checkpoint after training')
     
     args = parser.parse_args()
     
@@ -907,5 +904,4 @@ if __name__ == "__main__":
         max_neg_rating=args.max_neg_rating,
         min_pos_rating=args.min_pos_rating,
         custom_folder_name=args.custom_folder_name,
-        save_model_checkpoint=args.save_model_checkpoint
     )
