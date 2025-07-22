@@ -195,29 +195,49 @@ def plot_validation_curves(validation_logs: List[Dict], save_path: str):
 
 def load_concept_probes(probe_checkpoints_path: str) -> Dict[str, object]:
     """Load trained concept probes from checkpoint directory."""
+    print(f"Loading concept probes from: {probe_checkpoints_path}")
     concept_to_probe = {}
     probe_files = glob.glob(os.path.join(probe_checkpoints_path, "*.pkl"))
+    print(f"Found {len(probe_files)} probe files")
     
     # Create module mapping to handle renamed modules
     original_modules = sys.modules.copy()
     try:
         # Map old module names to new ones
+        print("Setting up module mapping for backwards compatibility...")
         if 'experiments.self_obfuscation_main' not in sys.modules:
+            print("Mapping experiments.self_obfuscation_main to experiments.self_obfuscation_v0")
             sys.modules['experiments.self_obfuscation_main'] = sys.modules.get('experiments.self_obfuscation_v0', None)
             if sys.modules['experiments.self_obfuscation_main'] is None:
-                import experiments.self_obfuscation_v0
-                sys.modules['experiments.self_obfuscation_main'] = experiments.self_obfuscation_v0
+                print("Importing experiments.self_obfuscation_v0")
+                try:
+                    import experiments.self_obfuscation_v0
+                    sys.modules['experiments.self_obfuscation_main'] = experiments.self_obfuscation_v0
+                except ImportError as e:
+                    print(f"Error importing experiments.self_obfuscation_v0: {e}")
+                    raise
         
         for probe_file in probe_files:
             concept = Path(probe_file).stem
-            with open(probe_file, 'rb') as f:
-                probe = pickle.load(f)
-            concept_to_probe[concept] = probe
+            print(f"Loading probe for concept: {concept}")
+            try:
+                with open(probe_file, 'rb') as f:
+                    probe = pickle.load(f)
+                concept_to_probe[concept] = probe
+                print(f"Successfully loaded probe for {concept}")
+            except (IOError, pickle.PickleError) as e:
+                print(f"Error loading probe file {probe_file}: {e}")
+                continue
+    except Exception as e:
+        print(f"Unexpected error loading probes: {e}")
+        raise
     finally:
         # Clean up temporary module mapping
+        print("Cleaning up temporary module mapping...")
         if 'experiments.self_obfuscation_main' in sys.modules and 'experiments.self_obfuscation_main' not in original_modules:
             del sys.modules['experiments.self_obfuscation_main']
     
+    print(f"Finished loading {len(concept_to_probe)} concept probes")
     return concept_to_probe
 
 def process_concept_training_data(
@@ -298,7 +318,20 @@ def process_concept_training_data(
     
     concepts = list(concept_to_probe.keys())
     
-
+    # Create intersection sets for concept selection to avoid KeyError
+    concepts_with_topical = list(set(concept_to_probe.keys()) & set(concept_to_topical_data.categories.keys()))
+    concepts_with_vanilla = list(set(concept_to_probe.keys()) & set(concept_to_vanilla_data.categories.keys()))
+    
+    if logger:
+        logger.print(f"Concepts with probes: {len(concepts)}")
+        logger.print(f"Concepts with topical data: {len(concepts_with_topical)}")
+        logger.print(f"Concepts with vanilla data: {len(concepts_with_vanilla)}")
+        
+        if len(concepts_with_topical) == 0:
+            logger.print("WARNING: No concepts have both probes and topical data!")
+        if len(concepts_with_vanilla) == 0:
+            logger.print("WARNING: No concepts have both probes and vanilla data!")
+    
     # Directly generate target samples for each split type using efficient sampling
     if logger:
         logger.print("Generating samples using efficient sampling approach...")
@@ -349,7 +382,11 @@ def process_concept_training_data(
             attempts += 1
             if split_name == 'clue_N_data_X_probe_X_topical':
                 # 1. No clue, X topical data, X probe → target score 1
-                concept_x = random.choice(concepts)
+                if not concepts_with_topical:
+                    if logger and attempts % 100 == 0:
+                        logger.print(f"  Failed attempt {attempts} for {split_name}: no concepts with topical data available")
+                    continue
+                concept_x = random.choice(concepts_with_topical)
                 probe_x = concept_to_probe[concept_x]
                 topical_data_x = concept_to_topical_data.categories.get(concept_x)
                 if topical_data_x and topical_data_x.pos_dataset:
@@ -361,8 +398,12 @@ def process_concept_training_data(
             elif split_name == 'clue_X_data_Y_probe_Y_topical':
                 # 2. X clue, Y topical data, Y probe → target score 1
                 concept_x = random.choice(concepts)
-                other_concepts = [c for c in concepts if c != concept_x]
-                concept_y = random.choice(other_concepts)
+                other_concepts_with_topical = [c for c in concepts_with_topical if c != concept_x]
+                if not other_concepts_with_topical:
+                    if logger and attempts % 100 == 0:
+                        logger.print(f"  Failed attempt {attempts} for {split_name}: no other concepts with topical data available")
+                    continue
+                concept_y = random.choice(other_concepts_with_topical)
                 probe_y = concept_to_probe[concept_y]
                 topical_data_y = concept_to_topical_data.categories.get(concept_y)
                 if topical_data_y and topical_data_y.pos_dataset:
@@ -372,7 +413,11 @@ def process_concept_training_data(
                     
             elif split_name == 'clue_X_data_X_probe_X_topical':
                 # 3. X clue, X topical data, X probe → target score 0
-                concept_x = random.choice(concepts)
+                if not concepts_with_topical:
+                    if logger and attempts % 100 == 0:
+                        logger.print(f"  Failed attempt {attempts} for {split_name}: no concepts with topical data available")
+                    continue
+                concept_x = random.choice(concepts_with_topical)
                 probe_x = concept_to_probe[concept_x]
                 topical_data_x = concept_to_topical_data.categories[concept_x]
                 prompt_resp = random.choice(topical_data_x.pos_dataset)
@@ -381,7 +426,11 @@ def process_concept_training_data(
                     
             elif split_name == 'clue_X_data_X_probe_X_vanilla':
                 # 4. X clue, X vanilla data, X probe → target score 0 (+ beh loss)
-                concept_x = random.choice(concepts)
+                if not concepts_with_vanilla:
+                    if logger and attempts % 100 == 0:
+                        logger.print(f"  Failed attempt {attempts} for {split_name}: no concepts with vanilla data available")
+                    continue
+                concept_x = random.choice(concepts_with_vanilla)
                 probe_x = concept_to_probe[concept_x]
                 vanilla_data_x = concept_to_vanilla_data.categories[concept_x]
                 prompt_resp = random.choice(vanilla_data_x.pos_dataset)
@@ -390,8 +439,16 @@ def process_concept_training_data(
                     
             elif split_name == 'clue_X_data_X_probe_Y_vanilla':
                 # 5. X clue, X vanilla data, Y probe → target score 0 (+ beh loss)
-                concept_x = random.choice(concepts)
+                if not concepts_with_vanilla:
+                    if logger and attempts % 100 == 0:
+                        logger.print(f"  Failed attempt {attempts} for {split_name}: no concepts with vanilla data available")
+                    continue
+                concept_x = random.choice(concepts_with_vanilla)
                 other_concepts = [c for c in concepts if c != concept_x]
+                if not other_concepts:
+                    if logger and attempts % 100 == 0:
+                        logger.print(f"  Failed attempt {attempts} for {split_name}: no other concepts available")
+                    continue
                 concept_y = random.choice(other_concepts)
                 probe_y = concept_to_probe[concept_y]
                 vanilla_data_x = concept_to_vanilla_data.categories[concept_x]
@@ -402,8 +459,12 @@ def process_concept_training_data(
             elif split_name == 'clue_N_data_Y_probe_X_topical':
                 # 6. No clue, Y topical data, X probe → target score 0
                 concept_x = random.choice(concepts)
-                other_concepts = [c for c in concepts if c != concept_x]
-                concept_y = random.choice(other_concepts)
+                other_concepts_with_topical = [c for c in concepts_with_topical if c != concept_x]
+                if not other_concepts_with_topical:
+                    if logger and attempts % 100 == 0:
+                        logger.print(f"  Failed attempt {attempts} for {split_name}: no other concepts with topical data available")
+                    continue
+                concept_y = random.choice(other_concepts_with_topical)
                 probe_x = concept_to_probe[concept_x]
                 topical_data_y = concept_to_topical_data.categories[concept_y]
                 prompt_resp = random.choice(topical_data_y.pos_dataset)
@@ -412,8 +473,12 @@ def process_concept_training_data(
             elif split_name == 'clue_N_data_Y_probe_X_vanilla':
                 # 7. No clue, Y vanilla data, X probe → target score 0 (+ beh loss)
                 concept_x = random.choice(concepts)
-                other_concepts = [c for c in concepts if c != concept_x]
-                concept_y = random.choice(other_concepts)
+                other_concepts_with_vanilla = [c for c in concepts_with_vanilla if c != concept_x]
+                if not other_concepts_with_vanilla:
+                    if logger and attempts % 100 == 0:
+                        logger.print(f"  Failed attempt {attempts} for {split_name}: no other concepts with vanilla data available")
+                    continue
+                concept_y = random.choice(other_concepts_with_vanilla)
                 probe_x = concept_to_probe[concept_x]
                 vanilla_data_y = concept_to_vanilla_data.categories[concept_y]
                 prompt_resp = random.choice(vanilla_data_y.pos_dataset)
@@ -430,8 +495,12 @@ def process_concept_training_data(
             elif split_name == 'clue_X_data_Y_probe_X_topical':
                 # 9. X clue, Y topical data, X probe → target score 0
                 concept_x = random.choice(concepts)
-                other_concepts = [c for c in concepts if c != concept_x]
-                concept_y = random.choice(other_concepts)
+                other_concepts_with_topical = [c for c in concepts_with_topical if c != concept_x]
+                if not other_concepts_with_topical:
+                    if logger and attempts % 100 == 0:
+                        logger.print(f"  Failed attempt {attempts} for {split_name}: no other concepts with topical data available")
+                    continue
+                concept_y = random.choice(other_concepts_with_topical)
                 probe_x = concept_to_probe[concept_x]
                 topical_data_y = concept_to_topical_data.categories[concept_y]
                 prompt_resp = random.choice(topical_data_y.pos_dataset)
@@ -441,8 +510,12 @@ def process_concept_training_data(
             elif split_name == 'clue_X_data_Y_probe_X_vanilla':
                 # 10. X clue, Y vanilla data, X probe → target score 0 (+ beh loss)
                 concept_x = random.choice(concepts)
-                other_concepts = [c for c in concepts if c != concept_x]
-                concept_y = random.choice(other_concepts)
+                other_concepts_with_vanilla = [c for c in concepts_with_vanilla if c != concept_x]
+                if not other_concepts_with_vanilla:
+                    if logger and attempts % 100 == 0:
+                        logger.print(f"  Failed attempt {attempts} for {split_name}: no other concepts with vanilla data available")
+                    continue
+                concept_y = random.choice(other_concepts_with_vanilla)
                 probe_x = concept_to_probe[concept_x]
                 vanilla_data_y = concept_to_vanilla_data.categories[concept_y]
                 prompt_resp = random.choice(vanilla_data_y.pos_dataset)
@@ -868,11 +941,13 @@ def train_concept_self_obfuscation_model(
     logger.print(f"Loading concept probes from: {probe_checkpoints}")
     concept_to_probe = load_concept_probes(probe_checkpoints)
     
-    # Filter to only requested concepts that have probes
-    if filter_to_concepts:
-        concept_to_probe = {k: v for k, v in concept_to_probe.items() if k in filter_to_concepts}
-    
     logger.print(f"Available concepts with probes: {list(concept_to_probe.keys())}")
+
+    # Filter to only requested concepts that have probes
+    if filter_to_concepts and len(filter_to_concepts) > 0:
+        concept_to_probe = {k: v for k, v in concept_to_probe.items() if k in filter_to_concepts}
+        logger.print(f"Filtered to concepts: {list(concept_to_probe.keys())}")
+    
     
     logger.print("Loading synthetic concept data...")
     # Load using the new data loading approach
@@ -915,11 +990,25 @@ def train_concept_self_obfuscation_model(
         min_pos_rating=min_pos_rating
     )
 
-    if filter_to_concepts:
-        concept_to_topical_data = {k: v for k, v in concept_to_topical_data.items() if k in filter_to_concepts}
-        concept_to_vanilla_data = {k: v for k, v in concept_to_vanilla_data.items() if k in filter_to_concepts}
-        concept_to_ultrachat_data = {k: v for k, v in concept_to_ultrachat_data.items() if k in filter_to_concepts}
+    if filter_to_concepts and len(filter_to_concepts) > 0:
+        concept_to_topical_data.categories = {k: v for k, v in concept_to_topical_data.categories.items() if k in filter_to_concepts}
+        concept_to_vanilla_data.categories = {k: v for k, v in concept_to_vanilla_data.categories.items() if k in filter_to_concepts}
+        concept_to_ultrachat_data.categories = {k: v for k, v in concept_to_ultrachat_data.categories.items() if k in filter_to_concepts}
     
+    topical_counts = {k: f"Pos {len(v.pos_dataset)} Neg {len(v.neg_dataset)}" for k, v in concept_to_topical_data.categories.items()}
+    vanilla_counts = {k: f"Pos {len(v.pos_dataset)} Neg {len(v.neg_dataset)}" for k, v in concept_to_vanilla_data.categories.items()}
+    ultrachat_counts = {k: f"Pos {len(v.pos_dataset)} Neg {len(v.neg_dataset)}" for k, v in concept_to_ultrachat_data.categories.items()}
+    logger.print(f"Raw counts per category for topical data: {topical_counts}")
+    logger.print(f"Raw counts per category for vanilla data: {vanilla_counts}")
+    logger.print(f"Raw counts per category for ultrachat data: {ultrachat_counts}")
+
+    min_samples = 10
+    logger.print(f"Culling categories with fewer than {min_samples} samples...")
+    # If any category has pos or neg dataset with fewer than 10 samples, remove it
+    concept_to_topical_data.categories = {k: v for k, v in concept_to_topical_data.categories.items() if len(v.pos_dataset) > 10 and len(v.neg_dataset) > 10}
+    concept_to_vanilla_data.categories = {k: v for k, v in concept_to_vanilla_data.categories.items() if len(v.pos_dataset) > 10 and len(v.neg_dataset) > 10}
+    concept_to_ultrachat_data.categories = {k: v for k, v in concept_to_ultrachat_data.categories.items() if len(v.pos_dataset) > 10 and len(v.neg_dataset) > 10}
+
     # Generate training data with new N/X/Y notation
     logger.print("Generating training data with N/X/Y notation...")
     data_splits = process_concept_training_data(
@@ -1135,7 +1224,9 @@ if __name__ == "__main__":
                       help='Validate every N steps (default: 1000)')
     parser.add_argument('--dont_save_model', action='store_true',
                       help='Do not save model checkpoint')
-   
+    parser.add_argument('--filter_to_concepts', type=str, nargs='+', default=None,
+                      help='Filter to only these concepts')
+    
     args = parser.parse_args()
     
     train_concept_self_obfuscation_model(
@@ -1152,4 +1243,5 @@ if __name__ == "__main__":
         validation_frequency=args.validation_frequency,
         custom_folder_name=args.custom_folder_name,
         save_model_checkpoint=not args.dont_save_model,
+        filter_to_concepts=args.filter_to_concepts,
     )
