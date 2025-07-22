@@ -56,6 +56,8 @@ import bitsandbytes as bnb
 
 from experiments.self_obfuscation_v0.utils_misc import load_local_model
 from experiments.self_obfuscation_v1.utils_evaluation import plot_training_curves
+from experiments.self_obfuscation_v1.utils_data import split_data as split_data_fun
+import matplotlib.pyplot as plt
 from data.self_obfuscation_v1_synthetic_rating.load_rated_data import load_rated_data
 from data.data import PosNegDataByCategory, PromptRespRating
 from experiments.self_obfuscation_v1.utils_setup import setup_experiment_directory, save_metadata, create_experiment_metadata
@@ -133,6 +135,63 @@ def get_random_synonym(concept: str) -> str:
     """Get a random synonym for the given concept, falling back to the original if not found."""
     synonyms = CONCEPT_SYNONYMS.get(concept, [concept])
     return random.choice(synonyms)
+
+def plot_validation_curves(validation_logs: List[Dict], save_path: str):
+    """Generate and save a dedicated validation loss plot."""
+    if not validation_logs:
+        return
+    
+    val_steps = [log['step'] for log in validation_logs]
+    val_beh_losses = [log['avg_beh_loss'] for log in validation_logs]
+    val_obf_losses = [log['avg_obf_loss'] for log in validation_logs]
+    
+    # Create 2x1 subplot layout for validation losses
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 8))
+    
+    # Validation behavior loss
+    ax1.plot(val_steps, val_beh_losses, 'o-', label='Validation Behavior Loss', 
+             color='lightblue', markersize=4, linewidth=2)
+    ax1.set_title('Validation Behavior Loss Over Training')
+    ax1.set_xlabel('Training Step')
+    ax1.set_ylabel('Behavior Loss')
+    ax1.legend()
+    ax1.grid(True, alpha=0.3)
+    
+    # Validation obfuscation loss
+    ax2.plot(val_steps, val_obf_losses, 'o-', label='Validation Obfuscation Loss', 
+             color='orange', markersize=4, linewidth=2)
+    ax2.set_title('Validation Obfuscation Loss Over Training')
+    ax2.set_xlabel('Training Step')
+    ax2.set_ylabel('Obfuscation Loss')
+    ax2.legend()
+    ax2.grid(True, alpha=0.3)
+    
+    plt.tight_layout()
+    plt.savefig(save_path, dpi=300, bbox_inches='tight')
+    plt.close()
+    
+    # Create combined validation plot
+    fig, ax = plt.subplots(figsize=(12, 6))
+    
+    if val_beh_losses:
+        ax.plot(val_steps, val_beh_losses, 'o-', label='Validation Behavior Loss', 
+               color='lightblue', markersize=4, linewidth=2)
+    
+    if val_obf_losses:
+        ax.plot(val_steps, val_obf_losses, 'o-', label='Validation Obfuscation Loss', 
+               color='orange', markersize=4, linewidth=2)
+    
+    ax.set_title('Validation Loss Curves')
+    ax.set_xlabel('Training Step')
+    ax.set_ylabel('Loss')
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+    
+    combined_val_path = save_path.replace('.png', '_combined.png')
+    plt.savefig(combined_val_path, dpi=300, bbox_inches='tight')
+    plt.close()
+    
+    print(f"Validation plots saved to {save_path} and {combined_val_path}")
 
 def load_concept_probes(probe_checkpoints_path: str) -> Dict[str, object]:
     """Load trained concept probes from checkpoint directory."""
@@ -452,21 +511,106 @@ def process_concept_training_data(
     
     return data_splits
 
+def evaluate_validation_set(
+    model: HFHardPromptedWithSelectableLayers,
+    val_data: List,
+    target_layers: List[int],
+    behaviour_lambda: float,
+    step_num: int,
+    logger
+) -> Dict:
+    """Evaluate model on validation set and return loss metrics."""
+    model.eval()
+    total_obf_loss = 0.0
+    total_beh_loss = 0.0
+    total_samples = 0
+    
+    with torch.no_grad():
+        for data_item in val_data:
+            probe, prompt_text, response_text, token_ids, label, use_behavior_loss = data_item
+            
+            # Forward pass
+            if token_ids is not None:
+                behavior_output = model.forward_from_string_and_ids(
+                    input_text=[prompt_text],
+                    target_ids=torch.tensor(token_ids, device=model.device).unsqueeze(0),
+                    target_attn_mask=torch.ones_like(torch.tensor(token_ids, device=model.device)).unsqueeze(0),
+                    add_chat_template=True,
+                    use_tunable_params=False,
+                    layers_to_probe=target_layers
+                )
+            else:
+                behavior_output = model.forward_from_string(
+                    input_text=[prompt_text],
+                    target_text=[response_text],
+                    add_chat_template=True,
+                    use_tunable_params=False,
+                    layers_to_probe=target_layers
+                )
+            
+            # Get target tokens
+            if token_ids is not None:
+                behavior_target_input_ids = torch.tensor(token_ids, device=model.device).unsqueeze(0)
+            else:
+                behavior_target_input_ids, _ = model.tokenize(
+                    text=[response_text],
+                    add_chat_template=False,
+                    add_special_tokens=False,
+                    max_length=behavior_output.target_logits.size(1),
+                    pad_to_max_length=True
+                )
+            
+            # Calculate behavior loss
+            if use_behavior_loss:
+                beh_losses = F.cross_entropy(
+                    behavior_output.target_logits.transpose(1, 2),
+                    behavior_target_input_ids,
+                    reduction="none"
+                )
+                beh_losses *= behavior_output.loss_mask.float()
+                num_valid_tokens = behavior_output.loss_mask.float().sum(dim=-1)
+                behavior_loss = beh_losses.sum(dim=-1) / (num_valid_tokens + 1e-8)
+            else:
+                behavior_loss = torch.tensor(0.0, device=behavior_output.target_logits.device)
+            
+            # Calculate obfuscation loss
+            scores = probe.predict(reps=behavior_output.target_reps)
+            ideal_scores = torch.tensor([label], device=model.device, dtype=torch.float16)
+            obf_loss = F.mse_loss(scores, ideal_scores, reduction="none")
+            
+            total_obf_loss += obf_loss.mean().item()
+            total_beh_loss += behavior_loss.mean().item() if hasattr(behavior_loss, 'mean') else behavior_loss.item()
+            total_samples += 1
+    
+    model.train()
+    
+    validation_result = {
+        'step': step_num,
+        'avg_obf_loss': total_obf_loss / total_samples,
+        'avg_beh_loss': total_beh_loss / total_samples,
+        'num_samples': total_samples
+    }
+    
+    logger.print(f"Validation at step {step_num}: obf_loss={validation_result['avg_obf_loss']:.4f}, beh_loss={validation_result['avg_beh_loss']:.4f}")
+    
+    return validation_result
+
 def concept_training_loop(
     model: HFHardPromptedWithSelectableLayers,
-    label_1_data: List,
-    label_0_data: List,
+    train_data: List,
+    val_data: List,
     num_epochs: int,
     learning_rate: float,
     behaviour_lambda: float,
     target_layers: List[int],
     logger,
     checkpoint_path: str,
+    validation_frequency: int = 1000,
     concept_to_probe: Dict = None,
     data_splits: Dict = None
 ):
     """
-    Enhanced training loop with detailed logging for N/X/Y notation.
+    Enhanced training loop with detailed logging for N/X/Y notation and validation.
     """
     model.requires_grad_(True)
     optim = bnb.optim.Adam8bit(model.parameters(), lr=learning_rate)
@@ -478,6 +622,7 @@ def concept_training_loop(
     
     # Tracking dictionaries
     step_logs = []
+    validation_logs = []
     behavior_losses = []
     obf_losses = []
     loss10_behavior = []
@@ -486,20 +631,26 @@ def concept_training_loop(
     loss50_obf = []
     
     step_num = 0
-    total_steps = (len(label_1_data) + len(label_0_data)) * num_epochs
-    epoch_data = label_1_data + label_0_data
+    total_steps = len(train_data) * num_epochs
     pbar = tqdm(total=total_steps, desc="Enhanced Training Progress")
     
-    unique_epoch_data = len(list(set(epoch_data)))
-    logger.print(f"Unique data items out of total: {unique_epoch_data} / {len(epoch_data)}")
+    unique_train_data = len(list(set(train_data)))
+    logger.print(f"Unique training data items out of total: {unique_train_data} / {len(train_data)}")
+    
+    # Initial validation at step 0
+    if val_data:
+        validation_result = evaluate_validation_set(
+            model, val_data, target_layers, behaviour_lambda, step_num, logger
+        )
+        validation_logs.append(validation_result)
 
     for epoch in range(num_epochs):
         logger.print(f"Epoch {epoch}...")
         
-        # Combine and shuffle data
-        random.shuffle(epoch_data)
+        # Shuffle training data
+        random.shuffle(train_data)
         
-        for data_item in epoch_data:
+        for data_item in train_data:
             with torch.set_grad_enabled(True):
                 # Temporarily enable parameter gradients
                 for param in model.parameters():
@@ -658,6 +809,13 @@ def concept_training_loop(
                     'probe': probe_name
                 })
                 
+                # Perform validation at specified frequency
+                if val_data and step_num > 0 and step_num % validation_frequency == 0:
+                    validation_result = evaluate_validation_set(
+                        model, val_data, target_layers, behaviour_lambda, step_num, logger
+                    )
+                    validation_logs.append(validation_result)
+                
                 # Clean up
                 del behavior_output, behavior_target_input_ids, loss
                 
@@ -675,7 +833,13 @@ def concept_training_loop(
     with open(os.path.join(checkpoint_path, "detailed_training_logs.json"), "w") as f:
         json.dump(step_logs, f, indent=2)
     
-    return model, behavior_losses, obf_losses, loss10_behavior, loss10_obf, loss50_behavior, loss50_obf
+    # Save validation logs to separate file
+    if validation_logs:
+        with open(os.path.join(checkpoint_path, "validation_logs.json"), "w") as f:
+            json.dump(validation_logs, f, indent=2)
+        logger.print(f"Saved {len(validation_logs)} validation evaluations to validation_logs.json")
+    
+    return model, behavior_losses, obf_losses, loss10_behavior, loss10_obf, loss50_behavior, loss50_obf, validation_logs
 
 def train_concept_self_obfuscation_model(
     model_name: str, # e.g."gemma_2_9b_instruct"
@@ -687,8 +851,12 @@ def train_concept_self_obfuscation_model(
     behaviour_lambda: float, # e.g. 0.1
     max_neg_rating: float = 0.25, # Maximum rating threshold for negative samples
     min_pos_rating: float = 0.75, # Minimum rating threshold for positive samples
+    validation_split: float = 0.05, # Percentage of training data to hold out for validation
+    validation_frequency: int = 1000, # Validate every N steps
     custom_folder_name: str = "",
-    logger = None
+    filter_to_concepts: List[str] = None,
+    logger = None,
+    save_model_checkpoint: bool = True,
 ):
     """Train a model to perform self-obfuscation against concept probes."""
     if logger is None:
@@ -701,6 +869,9 @@ def train_concept_self_obfuscation_model(
     concept_to_probe = load_concept_probes(probe_checkpoints)
     
     # Filter to only requested concepts that have probes
+    if filter_to_concepts:
+        concept_to_probe = {k: v for k, v in concept_to_probe.items() if k in filter_to_concepts}
+    
     logger.print(f"Available concepts with probes: {list(concept_to_probe.keys())}")
     
     logger.print("Loading synthetic concept data...")
@@ -743,6 +914,11 @@ def train_concept_self_obfuscation_model(
         max_neg_rating=max_neg_rating, 
         min_pos_rating=min_pos_rating
     )
+
+    if filter_to_concepts:
+        concept_to_topical_data = {k: v for k, v in concept_to_topical_data.items() if k in filter_to_concepts}
+        concept_to_vanilla_data = {k: v for k, v in concept_to_vanilla_data.items() if k in filter_to_concepts}
+        concept_to_ultrachat_data = {k: v for k, v in concept_to_ultrachat_data.items() if k in filter_to_concepts}
     
     # Generate training data with new N/X/Y notation
     logger.print("Generating training data with N/X/Y notation...")
@@ -770,7 +946,6 @@ def train_concept_self_obfuscation_model(
         "model_name": model_name,
         "model_checkpoint": model_checkpoint,
         "probe_checkpoints": probe_checkpoints,
-        #"target_concepts": available_concepts,
         "num_samples_per_concept": num_samples_per_concept,
         "num_epochs": num_epochs,
         "learning_rate": learning_rate,
@@ -793,40 +968,102 @@ def train_concept_self_obfuscation_model(
     )
     
     # Prepare data for training
-    label_1_data = data_splits['clue_N_data_X_probe_X_topical'] + data_splits['clue_X_data_Y_probe_Y_topical']
-    label_0_data = (data_splits['clue_X_data_X_probe_X_topical'] + 
-                    data_splits['clue_X_data_X_probe_X_vanilla'] + 
-                    data_splits['clue_X_data_X_probe_Y_vanilla'] +
-                    data_splits['clue_N_data_Y_probe_X_topical'] + 
-                    data_splits['clue_N_data_Y_probe_X_vanilla'] +
-                    data_splits['clue_N_data_Y_probe_X_ultrachat'] +
-                    data_splits['clue_X_data_Y_probe_X_topical'] +
-                    data_splits['clue_X_data_Y_probe_X_vanilla'] +
-                    data_splits['clue_X_data_Y_probe_X_ultrachat'])
+    all_data = []
+    for split_name, split_data in data_splits.items():
+        all_data.extend(split_data)
     
+    # Split data into training and validation sets
+    if validation_split > 0:
+        val_size = int(len(all_data) * validation_split)
+        train_data, val_data = split_data_fun(all_data, val_size, seed=42)
+        logger.print(f"Data split into training ({len(train_data)}) and validation ({len(val_data)}) sets")
+        logger.print(f"  Validation split: {validation_split:.1%}")
+    else:
+        train_data = all_data
+        val_data = []
+        logger.print(f"No validation split - using all {len(train_data)} samples for training")
+    
+    # Count labels in training and validation sets
+    train_label_1 = sum(1 for item in train_data if item[4] == 1)
+    train_label_0 = len(train_data) - train_label_1
+    val_label_1 = sum(1 for item in val_data if item[4] == 1) if val_data else 0
+    val_label_0 = len(val_data) - val_label_1 if val_data else 0
+    
+    # Save validation set to JSON if it exists
+    if val_data:
+        validation_set_data = []
+        for i, data_item in enumerate(val_data):
+            probe, prompt_text, response_text, token_ids, label, use_behavior_loss = data_item
+            
+            # Get probe name for JSON serialization
+            probe_name = "unknown"
+            if concept_to_probe:
+                for concept, concept_probe in concept_to_probe.items():
+                    try:
+                        if concept_probe is probe:
+                            probe_name = concept
+                            break
+                    except:
+                        continue
+            
+            # Determine detailed data type
+            detailed_data_type = "unknown"
+            if data_splits:
+                for split_name, split_data in data_splits.items():
+                    if any(item[:3] == data_item[:3] for item in split_data):  # Compare first 3 elements
+                        detailed_data_type = split_name
+                        break
+            
+            validation_item = {
+                "index": i,
+                "probe_name": probe_name,
+                "prompt": prompt_text,
+                "response": response_text,
+                "token_ids": token_ids,
+                "label": label,
+                "use_behavior_loss": use_behavior_loss,
+                "data_type": detailed_data_type
+            }
+            validation_set_data.append(validation_item)
+        
+        # Save validation set
+        validation_file_path = os.path.join(checkpoint_path, "validation_set.json")
+        with open(validation_file_path, "w") as f:
+            json.dump(validation_set_data, f, indent=2)
+        logger.print(f"Saved validation set ({len(validation_set_data)} samples) to validation_set.json")
+
     logger.print(f"Training data prepared:")
-    logger.print(f"  Label=1 (maximize probe): {len(label_1_data)}")
-    logger.print(f"  Label=0 (minimize probe): {len(label_0_data)}")
+    logger.print(f"  Training - Label=1 (maximize probe): {train_label_1}")
+    logger.print(f"  Training - Label=0 (minimize probe): {train_label_0}")
+    if val_data:
+        logger.print(f"  Validation - Label=1 (maximize probe): {val_label_1}")
+        logger.print(f"  Validation - Label=0 (minimize probe): {val_label_0}")
     
     # Train model
     logger.print("Starting model training...")
-    trained_model, behavior_losses, obf_losses, loss10_behavior, loss10_obf, loss50_behavior, loss50_obf = concept_training_loop(
+    if val_data:
+        logger.print(f"Validation will be performed every {validation_frequency} steps")
+    trained_model, behavior_losses, obf_losses, loss10_behavior, loss10_obf, loss50_behavior, loss50_obf, validation_logs = concept_training_loop(
         model=model,
-        label_1_data=label_1_data,
-        label_0_data=label_0_data,
+        train_data=train_data,
+        val_data=val_data,
         num_epochs=num_epochs,
         learning_rate=learning_rate,
         behaviour_lambda=behaviour_lambda,
         target_layers=target_layers,
         logger=logger,
         checkpoint_path=checkpoint_path,
+        validation_frequency=validation_frequency,
         concept_to_probe=concept_to_probe,
         data_splits=data_splits
     )
     
     # Save model checkpoint
-    logger.print(f"Saving model checkpoint to {checkpoint_path}...")
-    trained_model.model.save_pretrained(checkpoint_path)
+    if save_model_checkpoint:
+        logger.print(f"Saving model checkpoint to {checkpoint_path}...")
+        trained_model.model.save_pretrained(checkpoint_path)
+    else:
+        logger.print("Not saving model checkpoint")
     
     # Save training metadata
     metadata = create_experiment_metadata(
@@ -838,7 +1075,13 @@ def train_concept_self_obfuscation_model(
     # Generate and save training plots
     logger.print("Generating training loss plots...")
     plot_path = os.path.join(checkpoint_path, "training_losses.png")
-    plot_training_curves(behavior_losses, obf_losses, loss10_behavior, loss10_obf, loss50_behavior, loss50_obf, plot_path)
+    plot_training_curves(behavior_losses, obf_losses, loss10_behavior, loss10_obf, loss50_behavior, loss50_obf, plot_path, validation_logs)
+    
+    # Generate and save validation plot separately if validation data exists
+    if validation_logs:
+        logger.print("Generating separate validation plot...")
+        validation_plot_path = os.path.join(checkpoint_path, "validation_losses.png")
+        plot_validation_curves(validation_logs, validation_plot_path)
     
     # Save loss data
     loss_data = {
@@ -872,10 +1115,6 @@ if __name__ == "__main__":
     parser.add_argument('--probe_checkpoints', type=str,
                       default="experiments/self_obfuscation_v1/outputs/probe_checkpoints/20250717_012848_TRAIN_labelled_topical_logistic_12_075025",
                       help='Name of probe checkpoints directory')
-    # parser.add_argument('--target_concepts', type=str, nargs='+',
-    #                   default=["excited", "german", "jokey", "all-caps", "mathematical", 
-    #                           "chemistry-based", "biology-focused", "rhyming"],
-    #                   help='List of target concepts to train against')
     parser.add_argument('--num_samples_per_concept', type=int, default=150,
                       help='Number of samples per concept for training')
     parser.add_argument('--num_epochs', type=int, default=3,
@@ -890,7 +1129,13 @@ if __name__ == "__main__":
                       help='Minimum rating threshold for positive samples (default: 0.75)')
     parser.add_argument('--custom_folder_name', type=str, default="",
                       help='Custom folder name for outputs')
-    
+    parser.add_argument('--validation_split', type=float, default=0.05,
+                      help='Percentage of training data to hold out for validation (default: 0.05)')
+    parser.add_argument('--validation_frequency', type=int, default=1000,
+                      help='Validate every N steps (default: 1000)')
+    parser.add_argument('--dont_save_model', action='store_true',
+                      help='Do not save model checkpoint')
+   
     args = parser.parse_args()
     
     train_concept_self_obfuscation_model(
@@ -903,5 +1148,8 @@ if __name__ == "__main__":
         behaviour_lambda=args.behaviour_lambda,
         max_neg_rating=args.max_neg_rating,
         min_pos_rating=args.min_pos_rating,
+        validation_split=args.validation_split,
+        validation_frequency=args.validation_frequency,
         custom_folder_name=args.custom_folder_name,
+        save_model_checkpoint=not args.dont_save_model,
     )
