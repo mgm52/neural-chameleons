@@ -321,8 +321,8 @@ if __name__ == "__main__":
 
     # --- Example Command ---
     # python compute_data_diversity.py \
-    #   --synthetic_data_dir "data/synthetic_data/outputs/20250627_045905" \
-    #   --output_file "experiments/self_obfuscation_concepts/outputs/diversity_analysis/adjective_diversity_results.json" \
+    #   --synthetic_data_dir "data/self_obfuscation_v1_synthetic/outputs/20250627_045905" \
+    #   --output_file "experiments/self_obfuscation_v1/outputs/diversity_analysis/adjective_diversity_results.json" \
     #   --num_ultrachat_samples 512
 
     compute_and_save_diversity(
