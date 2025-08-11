@@ -14,12 +14,13 @@ class PromptResp:
         return self.__str__()
 
 class PromptRespRating:
-    def __init__(self, prompt: str, response: str, ratings: Dict[str, float]):
+    def __init__(self, prompt: str, response: str, ratings: Dict[str, float], adjectives: List[str] = None):
         self.prompt = prompt
         self.response = response
         self.ratings = ratings
+        self.adjectives = adjectives or []
     def __str__(self):
-        return f"Prompt: {self.prompt}\nResponse: {self.response}\nRatings: {self.ratings}"
+        return f"Prompt: {self.prompt}\nResponse: {self.response}\nRatings: {self.ratings}\nAdjectives: {self.adjectives}"
     def __repr__(self):
         return self.__str__()
 
@@ -56,17 +57,28 @@ class PosNegDataByCategory:
         return cls(categories)
 
     @classmethod
-    def from_ratings(cls, ratings_list: List[PromptRespRating], max_neg_rating: float = 0.25, min_pos_rating: float = 0.75, shuffle: bool = True):
+    def from_ratings(cls, ratings_list: List[PromptRespRating], max_neg_rating: float = 0.25, min_pos_rating: float = 0.75, shuffle: bool = True, ignore_generation_categories: bool = False):
         categories = defaultdict(lambda: PosNegData(pos_dataset=[], neg_dataset=[], shuffle=False))
         
         for rating_obj in ratings_list:
             prompt_response = PromptResp(rating_obj.prompt, rating_obj.response)
-            for category, rating_value in rating_obj.ratings.items():
+            generation_categories = rating_obj.adjectives
+            
+            for rating_category, rating_value in rating_obj.ratings.items():
                 if rating_value is not None:  # Skip None ratings
-                    if rating_value <= max_neg_rating:
-                        categories[category].neg_dataset.append(prompt_response)
-                    elif rating_value >= min_pos_rating:
-                        categories[category].pos_dataset.append(prompt_response)
+                    if ignore_generation_categories:
+                        # For data like ultrachat that wasn't generated with target adjectives
+                        # Just use rating thresholds
+                        if rating_value <= max_neg_rating:
+                            categories[rating_category].neg_dataset.append(prompt_response)
+                        elif rating_value >= min_pos_rating:
+                            categories[rating_category].pos_dataset.append(prompt_response)
+                    else:
+                        # Sample must have rating threshold AND rating_category must be in adjectives list
+                        if (rating_category not in generation_categories) and (rating_value <= max_neg_rating):
+                            categories[rating_category].neg_dataset.append(prompt_response)
+                        elif (rating_category in generation_categories) and (rating_value >= min_pos_rating):
+                            categories[rating_category].pos_dataset.append(prompt_response)
         
         for category in categories:
             categories[category]._PosNegData__balance_to_same_len(shuffle=shuffle)
