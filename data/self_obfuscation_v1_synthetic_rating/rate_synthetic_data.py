@@ -19,11 +19,27 @@ import time
 import argparse
 from dotenv import load_dotenv
 import uuid
+import concurrent.futures
+import threading
+from dataclasses import dataclass
 
 # Import Gemma model functions from generate_synthetic_data.py
 import sys
-sys.path.append(str(Path(__file__).parent))
-from generate_synthetic_data import load_transformers_model, optimized_generate_from_string, remove_gemini_special_chars
+import os
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from self_obfuscation_v1_synthetic.generate_synthetic_data import load_transformers_model, optimized_generate_from_string, remove_gemini_special_chars
+
+
+@dataclass
+class BatchInfo:
+    """Information about a submitted batch."""
+    batch_id: str
+    chunk_index: int
+    chunk_start: int
+    chunk_end: int
+    chunk_file_data: List[Tuple[str, List[Dict[str, Any]]]]
+    batch_file_path: Optional[str] = None
+    submitted_at: Optional[datetime] = None
 
 
 class AdjectiveFitEvaluator:
@@ -31,26 +47,34 @@ class AdjectiveFitEvaluator:
     
     def __init__(self, data_dir: str, output_dir: Optional[str] = None, model: str = "gpt-4o-mini", 
                  subset_size: Optional[int] = None, use_local_gemma: bool = False, 
-                 gemma_model_name: str = "gemma_2_9b_instruct", resume_batch_id: Optional[str] = None):
+                 gemma_model_name: str = "gemma_2_9b_instruct", resume_batch_id: Optional[str] = None,
+                 chunk_size: Optional[int] = None, max_parallel_batches: int = 5, 
+                 skip_vanilla_responses: bool = False):
         """
         Initialize the evaluator.
         
         Args:
             data_dir: Directory containing the JSON files with synthetic data
-            output_dir: Directory to save the mega dataset (defaults to data_dir/evaluated)
+            output_dir: Directory to save the mega dataset (defaults to data/self_obfuscation_v1_synthetic_rating/outputs)
             model: OpenAI model to use for evaluation (ignored if use_local_gemma=True)
             subset_size: If specified, process only this many entries per file
             use_local_gemma: If True, use local Gemma model instead of OpenAI API
             gemma_model_name: Name of the Gemma model to load
             resume_batch_id: If specified, resume processing from an existing batch ID
+            chunk_size: If specified, process data in chunks of this size and save incrementally
+            max_parallel_batches: Maximum number of OpenAI batches to run in parallel (default: 5)
+            skip_vanilla_responses: If True, skip evaluation of vanilla responses entirely
         """
         self.data_dir = Path(data_dir)
-        self.output_dir = Path(output_dir) if output_dir else self.data_dir / "evaluated"
+        self.output_dir = Path(output_dir) if output_dir else Path("data/self_obfuscation_v1_synthetic_rating/outputs")
         self.model = model
         self.subset_size = subset_size
         self.use_local_gemma = use_local_gemma
         self.gemma_model_name = gemma_model_name
         self.resume_batch_id = resume_batch_id
+        self.chunk_size = chunk_size
+        self.max_parallel_batches = max_parallel_batches
+        self.skip_vanilla_responses = skip_vanilla_responses
         
         if not use_local_gemma:
             self.client = openai.OpenAI()  # Will use OPENAI_API_KEY env var
@@ -70,6 +94,16 @@ class AdjectiveFitEvaluator:
         # Initialize parse failure log
         self.parse_failures = []
         
+        # Initialize mega dataset file path for incremental saving
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        self.mega_dataset_path = self.output_dir / f"mega_dataset_evaluated_{timestamp}.json"
+        self.mega_dataset_initialized = False
+        
+        # Initialize parallel batch tracking
+        self.active_batches: List[BatchInfo] = []
+        self.completed_batches: List[BatchInfo] = []
+        self.batch_lock = threading.Lock()
+        
         print(f"Found {len(self.adjectives)} adjectives: {', '.join(sorted(self.adjectives))}")
         if use_local_gemma:
             print(f"Using local Gemma model: {gemma_model_name}")
@@ -78,6 +112,11 @@ class AdjectiveFitEvaluator:
         
         if resume_batch_id:
             print(f"Will resume from batch ID: {resume_batch_id}")
+        
+        if chunk_size:
+            print(f"Will process data in chunks of {chunk_size} entries with incremental saving")
+            if not use_local_gemma:
+                print(f"Will run up to {max_parallel_batches} OpenAI batches in parallel")
     
     def _extract_adjectives(self) -> List[str]:
         """Extract unique adjectives from JSON filenames."""
@@ -169,12 +208,15 @@ Respond with ONLY a JSON object in this exact format:
         
         for source_file, data in all_file_data:
             for i, entry in enumerate(data):
-                # Create requests for prompt, vanilla_response, and topical_response
-                for text_type, text_key in [
+                # Create requests for prompt, topical_response, and optionally vanilla_response
+                text_keys = [
                     ("prompt", "prompt"),
-                    ("response", "vanilla_response"),
                     ("response", "topical_response")
-                ]:
+                ]
+                if not self.skip_vanilla_responses:
+                    text_keys.append(("response", "vanilla_response"))
+                
+                for text_type, text_key in text_keys:
                     text = entry[text_key]
                     prompt = self._create_evaluation_prompt(text, text_type, self.adjectives)
                     
@@ -550,12 +592,15 @@ Respond with ONLY a JSON object in this exact format:
         
         for source_file, data in all_file_data:
             for i, entry in enumerate(data):
-                # Create evaluation prompts for prompt, vanilla_response, and topical_response
-                for text_type, text_key in [
+                # Create evaluation prompts for prompt, topical_response, and optionally vanilla_response
+                text_keys = [
                     ("prompt", "prompt"),
-                    ("response", "vanilla_response"),
                     ("response", "topical_response")
-                ]:
+                ]
+                if not self.skip_vanilla_responses:
+                    text_keys.append(("response", "vanilla_response"))
+                
+                for text_type, text_key in text_keys:
                     text = entry[text_key]
                     prompt = self._create_evaluation_prompt(text, text_type, self.adjectives)
                     custom_id = f"{source_file}_{i}_{text_key}"
@@ -566,7 +611,7 @@ Respond with ONLY a JSON object in this exact format:
         print(f"Generated {len(evaluation_prompts)} evaluation prompts")
         
         # Generate responses using Gemma
-        batch_size = 64
+        batch_size = 32
         responses = optimized_generate_from_string(
             self.gemma_model,
             self.gemma_tokenizer,
@@ -621,6 +666,35 @@ Respond with ONLY a JSON object in this exact format:
         
         return result
     
+    def _initialize_mega_dataset(self):
+        """Initialize the mega dataset file with an empty array."""
+        if not self.mega_dataset_initialized:
+            with open(self.mega_dataset_path, 'w', encoding='utf-8') as f:
+                json.dump([], f)
+            self.mega_dataset_initialized = True
+            print(f"Initialized mega dataset file: {self.mega_dataset_path}")
+    
+    def _append_to_mega_dataset(self, chunk_data: List[Dict[str, Any]]):
+        """Append chunk data to the mega dataset file."""
+        if not chunk_data:
+            return
+            
+        # Read current data
+        if os.path.exists(self.mega_dataset_path):
+            with open(self.mega_dataset_path, 'r', encoding='utf-8') as f:
+                current_data = json.load(f)
+        else:
+            current_data = []
+        
+        # Append new data
+        current_data.extend(chunk_data)
+        
+        # Write back to file
+        with open(self.mega_dataset_path, 'w', encoding='utf-8') as f:
+            json.dump(current_data, f, indent=2, ensure_ascii=False)
+        
+        print(f"Appended {len(chunk_data)} entries to mega dataset. Total entries: {len(current_data)}")
+    
     def evaluate_single_file(self, json_file: str) -> List[Dict[str, Any]]:
         """
         Evaluate a single JSON file using batch processing.
@@ -665,30 +739,35 @@ Respond with ONLY a JSON object in this exact format:
         
         # Organize results by entry, skipping entries with failed ratings
         prompt_ratings = []
-        vanilla_response_ratings = []
         topical_response_ratings = []
+        vanilla_response_ratings = []
         valid_entries = []  # Track which entries have valid ratings
         
         for i, entry in enumerate(data):
             prompt_custom_id = f"{source_file}_{i}_prompt"
-            vanilla_custom_id = f"{source_file}_{i}_vanilla_response"
             topical_custom_id = f"{source_file}_{i}_topical_response"
+            vanilla_custom_id = f"{source_file}_{i}_vanilla_response"
             
             prompt_rating = parsed_results.get(prompt_custom_id)
-            vanilla_rating = parsed_results.get(vanilla_custom_id)
             topical_rating = parsed_results.get(topical_custom_id)
+            vanilla_rating = parsed_results.get(vanilla_custom_id) if not self.skip_vanilla_responses else {}
             
-            # Only include entries that have all three rating types
-            if prompt_rating is not None and vanilla_rating is not None and topical_rating is not None:
+            # Only include entries that have required rating types
+            valid_entry = prompt_rating is not None and topical_rating is not None
+            if not self.skip_vanilla_responses:
+                valid_entry = valid_entry and vanilla_rating is not None
+            
+            if valid_entry:
                 prompt_ratings.append(prompt_rating)
-                vanilla_response_ratings.append(vanilla_rating)
                 topical_response_ratings.append(topical_rating)
+                if not self.skip_vanilla_responses:
+                    vanilla_response_ratings.append(vanilla_rating)
                 valid_entries.append((i, entry))
         
         # Normalize ratings
         normalized_prompt_ratings = self._normalize_ratings(prompt_ratings)
-        normalized_vanilla_ratings = self._normalize_ratings(vanilla_response_ratings)
         normalized_topical_ratings = self._normalize_ratings(topical_response_ratings)
+        normalized_vanilla_ratings = self._normalize_ratings(vanilla_response_ratings) if not self.skip_vanilla_responses else []
         
         # Create enriched entries (only for valid entries)
         enriched_data = []
@@ -697,8 +776,9 @@ Respond with ONLY a JSON object in this exact format:
             
             # Add only normalized ratings (0-1 scale)
             enriched_entry["prompt_normalized_ratings"] = normalized_prompt_ratings[rating_index]
-            enriched_entry["vanilla_response_normalized_ratings"] = normalized_vanilla_ratings[rating_index]
             enriched_entry["topical_response_normalized_ratings"] = normalized_topical_ratings[rating_index]
+            if not self.skip_vanilla_responses:
+                enriched_entry["vanilla_response_normalized_ratings"] = normalized_vanilla_ratings[rating_index]
             
             # Add metadata
             enriched_entry["source_file"] = source_file
@@ -717,10 +797,11 @@ Respond with ONLY a JSON object in this exact format:
         """
         Evaluate all JSON files in the data directory using either OpenAI Batch API or local Gemma.
         
-        This method loads all JSON files and processes everything together for efficiency.
+        If chunk_size is specified, processes data in chunks and saves incrementally to mega dataset.
+        Otherwise, processes everything together for efficiency.
         
         Returns:
-            Combined list of all enriched data entries
+            Combined list of all enriched data entries (empty if using chunked processing)
         """
         json_files = glob.glob(str(self.data_dir / "*.json"))
         all_file_data = []
@@ -735,6 +816,12 @@ Respond with ONLY a JSON object in this exact format:
                 print(f"Processing subset of {len(data)} entries from {Path(json_file).stem}")
             
             all_file_data.append((Path(json_file).stem, data))
+        
+        # If chunk_size is specified, process in chunks
+        if self.chunk_size is not None:
+            return self._evaluate_in_chunks(all_file_data)
+        
+        # Otherwise, process all at once (original behavior)
         
         # Choose evaluation method based on configuration
         if self.use_local_gemma:
@@ -793,31 +880,36 @@ Respond with ONLY a JSON object in this exact format:
         
         # Collect all raw ratings for normalization (only valid entries)
         all_prompt_ratings = []
-        all_vanilla_ratings = []
         all_topical_ratings = []
+        all_vanilla_ratings = []
         valid_entries = []  # Track which entries have valid ratings
         
         for source_file, data in all_file_data:
             for i, entry in enumerate(data):
                 prompt_custom_id = f"{source_file}_{i}_prompt"
-                vanilla_custom_id = f"{source_file}_{i}_vanilla_response"
                 topical_custom_id = f"{source_file}_{i}_topical_response"
+                vanilla_custom_id = f"{source_file}_{i}_vanilla_response"
                 
                 prompt_ratings = parsed_results.get(prompt_custom_id)
-                vanilla_ratings = parsed_results.get(vanilla_custom_id)
                 topical_ratings = parsed_results.get(topical_custom_id)
+                vanilla_ratings = parsed_results.get(vanilla_custom_id) if not self.skip_vanilla_responses else {}
                 
-                # Only include entries that have all three rating types
-                if prompt_ratings is not None and vanilla_ratings is not None and topical_ratings is not None:
+                # Only include entries that have required rating types
+                valid_entry = prompt_ratings is not None and topical_ratings is not None
+                if not self.skip_vanilla_responses:
+                    valid_entry = valid_entry and vanilla_ratings is not None
+                
+                if valid_entry:
                     all_prompt_ratings.append(prompt_ratings)
-                    all_vanilla_ratings.append(vanilla_ratings)
                     all_topical_ratings.append(topical_ratings)
+                    if not self.skip_vanilla_responses:
+                        all_vanilla_ratings.append(vanilla_ratings)
                     valid_entries.append((source_file, i, entry))
         
         # Normalize all ratings
         normalized_prompt_ratings = self._normalize_ratings(all_prompt_ratings)
-        normalized_vanilla_ratings = self._normalize_ratings(all_vanilla_ratings)
         normalized_topical_ratings = self._normalize_ratings(all_topical_ratings)
+        normalized_vanilla_ratings = self._normalize_ratings(all_vanilla_ratings) if not self.skip_vanilla_responses else []
         
         # Create enriched entries with normalized ratings (only for valid entries)
         for rating_index, (source_file, entry_index, entry) in enumerate(valid_entries):
@@ -825,8 +917,9 @@ Respond with ONLY a JSON object in this exact format:
             
             # Add only normalized ratings (0-1 scale)
             enriched_entry["prompt_normalized_ratings"] = normalized_prompt_ratings[rating_index]
-            enriched_entry["vanilla_response_normalized_ratings"] = normalized_vanilla_ratings[rating_index]
             enriched_entry["topical_response_normalized_ratings"] = normalized_topical_ratings[rating_index]
+            if not self.skip_vanilla_responses:
+                enriched_entry["vanilla_response_normalized_ratings"] = normalized_vanilla_ratings[rating_index]
             
             # Add metadata
             enriched_entry["source_file"] = source_file
@@ -841,6 +934,351 @@ Respond with ONLY a JSON object in this exact format:
         
         return all_enriched_data
     
+    def _submit_batch_for_chunk(self, chunk_index: int, chunk_start: int, chunk_end: int, 
+                               chunk_file_data: List[Tuple[str, List[Dict[str, Any]]]]) -> BatchInfo:
+        """
+        Submit a single batch for a chunk and return batch info.
+        
+        Args:
+            chunk_index: Index of the chunk (0-based)
+            chunk_start: Starting entry index
+            chunk_end: Ending entry index
+            chunk_file_data: Chunk data to process
+            
+        Returns:
+            BatchInfo object with batch details
+        """
+        # Create batch requests
+        batch_requests = self._create_batch_requests_for_all_data(chunk_file_data)
+        
+        # Create and upload batch file
+        batch_file_path = self._create_batch_file(batch_requests)
+        file_id = self._upload_batch_file(batch_file_path)
+        
+        # Submit batch
+        batch_id = self._submit_batch(file_id)
+        
+        # Create batch info
+        batch_info = BatchInfo(
+            batch_id=batch_id,
+            chunk_index=chunk_index,
+            chunk_start=chunk_start,
+            chunk_end=chunk_end,
+            chunk_file_data=chunk_file_data,
+            batch_file_path=batch_file_path,
+            submitted_at=datetime.now()
+        )
+        
+        print(f"Submitted batch {batch_id} for chunk {chunk_index + 1} (entries {chunk_start+1}-{chunk_end})")
+        return batch_info
+    
+    def _wait_for_batch_and_process(self, batch_info: BatchInfo) -> List[Dict[str, Any]]:
+        """
+        Wait for a batch to complete and process its results.
+        
+        Args:
+            batch_info: BatchInfo object for the batch to wait for
+            
+        Returns:
+            List of enriched data entries for this batch
+        """
+        print(f"Waiting for batch {batch_info.batch_id} (chunk {batch_info.chunk_index + 1}) to complete...")
+        
+        # Wait for completion
+        completed_batch = self._wait_for_batch_completion(batch_info.batch_id)
+        
+        # Download and parse results
+        batch_results = self._download_batch_results(completed_batch)
+        parsed_results = self._parse_batch_results(batch_results)
+        
+        # Clean up batch file
+        if batch_info.batch_file_path and os.path.exists(batch_info.batch_file_path):
+            os.remove(batch_info.batch_file_path)
+        
+        # Process results (same logic as original _evaluate_chunk)
+        all_prompt_ratings = []
+        all_topical_ratings = []
+        all_vanilla_ratings = []
+        valid_entries = []
+        
+        for source_file, data in batch_info.chunk_file_data:
+            for i, entry in enumerate(data):
+                prompt_custom_id = f"{source_file}_{i}_prompt"
+                topical_custom_id = f"{source_file}_{i}_topical_response"
+                vanilla_custom_id = f"{source_file}_{i}_vanilla_response"
+                
+                prompt_ratings = parsed_results.get(prompt_custom_id)
+                topical_ratings = parsed_results.get(topical_custom_id)
+                vanilla_ratings = parsed_results.get(vanilla_custom_id) if not self.skip_vanilla_responses else {}
+                
+                # Only include entries that have required rating types
+                valid_entry = prompt_ratings is not None and topical_ratings is not None
+                if not self.skip_vanilla_responses:
+                    valid_entry = valid_entry and vanilla_ratings is not None
+                
+                if valid_entry:
+                    all_prompt_ratings.append(prompt_ratings)
+                    all_topical_ratings.append(topical_ratings)
+                    if not self.skip_vanilla_responses:
+                        all_vanilla_ratings.append(vanilla_ratings)
+                    valid_entries.append((source_file, i, entry))
+        
+        # Normalize ratings
+        normalized_prompt_ratings = self._normalize_ratings(all_prompt_ratings)
+        normalized_topical_ratings = self._normalize_ratings(all_topical_ratings)
+        normalized_vanilla_ratings = self._normalize_ratings(all_vanilla_ratings) if not self.skip_vanilla_responses else []
+        
+        # Create enriched entries
+        chunk_enriched_data = []
+        for rating_index, (source_file, entry_index, entry) in enumerate(valid_entries):
+            enriched_entry = entry.copy()
+            
+            # Add normalized ratings
+            enriched_entry["prompt_normalized_ratings"] = normalized_prompt_ratings[rating_index]
+            enriched_entry["topical_response_normalized_ratings"] = normalized_topical_ratings[rating_index]
+            if not self.skip_vanilla_responses:
+                enriched_entry["vanilla_response_normalized_ratings"] = normalized_vanilla_ratings[rating_index]
+            
+            # Add metadata
+            enriched_entry["source_file"] = source_file
+            enriched_entry["evaluation_timestamp"] = datetime.now().isoformat()
+            enriched_entry["evaluation_model"] = self.model
+            enriched_entry["batch_id"] = batch_info.batch_id
+            enriched_entry["chunk_index"] = batch_info.chunk_index
+            enriched_entry["chunk_start"] = batch_info.chunk_start
+            
+            chunk_enriched_data.append(enriched_entry)
+        
+        print(f"Completed batch {batch_info.batch_id} with {len(chunk_enriched_data)} entries")
+        return chunk_enriched_data
+    
+    def _evaluate_in_chunks(self, all_file_data: List[Tuple[str, List[Dict[str, Any]]]]) -> List[Dict[str, Any]]:
+        """
+        Evaluate data in chunks with parallel batch processing for OpenAI API.
+        For local Gemma, processes sequentially.
+        
+        Args:
+            all_file_data: List of tuples (source_file, data_entries)
+            
+        Returns:
+            Empty list (data is saved incrementally to mega dataset file)
+        """
+        print(f"Processing data in chunks of {self.chunk_size} entries...")
+        
+        # Initialize mega dataset file
+        self._initialize_mega_dataset()
+        
+        # Flatten all data into a single list with source info
+        all_entries = []
+        for source_file, data in all_file_data:
+            for i, entry in enumerate(data):
+                all_entries.append((source_file, i, entry))
+        
+        print(f"Total entries to process: {len(all_entries)}")
+        
+        # Prepare chunks
+        chunks = []
+        for chunk_start in range(0, len(all_entries), self.chunk_size):
+            chunk_end = min(chunk_start + self.chunk_size, len(all_entries))
+            chunk_entries = all_entries[chunk_start:chunk_end]
+            
+            # Convert chunk back to the expected format
+            chunk_file_data = {}
+            for source_file, entry_idx, entry in chunk_entries:
+                if source_file not in chunk_file_data:
+                    chunk_file_data[source_file] = []
+                chunk_file_data[source_file].append((entry_idx, entry))
+            
+            # Convert to list format for processing
+            chunk_data_list = [(source_file, [entry for _, entry in entries]) 
+                              for source_file, entries in chunk_file_data.items()]
+            
+            chunks.append((chunk_start, chunk_end, chunk_data_list))
+        
+        if self.use_local_gemma:
+            # Sequential processing for Gemma (unchanged behavior)
+            for chunk_index, (chunk_start, chunk_end, chunk_data_list) in enumerate(chunks):
+                print(f"\nProcessing chunk {chunk_index + 1}: entries {chunk_start+1}-{chunk_end}")
+                chunk_enriched_data = self._evaluate_chunk(chunk_data_list, chunk_start)
+                self._append_to_mega_dataset(chunk_enriched_data)
+                
+                if self.parse_failures:
+                    self._write_parse_failures_log()
+                    self.parse_failures = []
+        else:
+            # Parallel batch processing for OpenAI API
+            self._evaluate_chunks_parallel(chunks)
+        
+        print(f"\nCompleted chunked processing. Results saved to: {self.mega_dataset_path}")
+        return []  # Return empty list since data is saved incrementally
+    
+    def _evaluate_chunks_parallel(self, chunks: List[Tuple[int, int, List[Tuple[str, List[Dict[str, Any]]]]]]):
+        """
+        Evaluate chunks in parallel using OpenAI batch API.
+        
+        Args:
+            chunks: List of (chunk_start, chunk_end, chunk_data_list) tuples
+        """
+        total_chunks = len(chunks)
+        print(f"Processing {total_chunks} chunks with up to {self.max_parallel_batches} parallel batches")
+        
+        # Submit initial batches
+        pending_batches = []
+        completed_chunks = []
+        
+        # Submit first batch of chunks
+        for chunk_index, (chunk_start, chunk_end, chunk_data_list) in enumerate(chunks[:self.max_parallel_batches]):
+            batch_info = self._submit_batch_for_chunk(chunk_index, chunk_start, chunk_end, chunk_data_list)
+            pending_batches.append(batch_info)
+        
+        remaining_chunks = chunks[self.max_parallel_batches:]
+        remaining_chunk_index = self.max_parallel_batches
+        
+        # Process batches as they complete
+        with concurrent.futures.ThreadPoolExecutor(max_workers=self.max_parallel_batches) as executor:
+            # Submit initial batch completion tasks
+            future_to_batch = {}
+            for batch_info in pending_batches:
+                future = executor.submit(self._wait_for_batch_and_process, batch_info)
+                future_to_batch[future] = batch_info
+            
+            # Process completed batches and submit new ones
+            while future_to_batch:
+                # Wait for at least one batch to complete
+                completed_futures = concurrent.futures.as_completed(future_to_batch, timeout=None)
+                
+                for future in completed_futures:
+                    batch_info = future_to_batch.pop(future)
+                    
+                    try:
+                        # Get the results and save them
+                        chunk_enriched_data = future.result()
+                        self._append_to_mega_dataset(chunk_enriched_data)
+                        completed_chunks.append(batch_info)
+                        
+                        print(f"Saved results for chunk {batch_info.chunk_index + 1} "
+                              f"({len(completed_chunks)}/{total_chunks} chunks completed)")
+                        
+                        # Submit next chunk if available
+                        if remaining_chunks:
+                            chunk_start, chunk_end, chunk_data_list = remaining_chunks.pop(0)
+                            new_batch_info = self._submit_batch_for_chunk(
+                                remaining_chunk_index, chunk_start, chunk_end, chunk_data_list
+                            )
+                            
+                            # Submit new batch for processing
+                            future = executor.submit(self._wait_for_batch_and_process, new_batch_info)
+                            future_to_batch[future] = new_batch_info
+                            remaining_chunk_index += 1
+                        
+                        # Write parse failures log for this chunk
+                        if self.parse_failures:
+                            self._write_parse_failures_log()
+                            self.parse_failures = []
+                            
+                    except Exception as e:
+                        print(f"Error processing batch {batch_info.batch_id}: {e}")
+                        # Continue with other batches
+                        continue
+                    
+                    break  # Only process one completed future at a time
+        
+        print(f"All {total_chunks} chunks processed successfully")
+    
+    def _evaluate_chunk(self, chunk_file_data: List[Tuple[str, List[Dict[str, Any]]]], chunk_offset: int) -> List[Dict[str, Any]]:
+        """
+        Evaluate a single chunk of data (used for sequential Gemma processing).
+        
+        Args:
+            chunk_file_data: List of tuples (source_file, data_entries) for this chunk
+            chunk_offset: Offset for generating unique batch IDs
+            
+        Returns:
+            List of enriched data entries for this chunk
+        """
+        # This method is now primarily for Gemma model processing
+        # OpenAI batch processing uses the parallel methods above
+        
+        if self.use_local_gemma:
+            # Use local Gemma model
+            parsed_results = self._evaluate_with_gemma(chunk_file_data)
+            batch_id = f"gemma_chunk_{chunk_offset//self.chunk_size}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        else:
+            # This shouldn't be called for OpenAI API in parallel mode, but handle it anyway
+            batch_requests = self._create_batch_requests_for_all_data(chunk_file_data)
+            
+            # Create and upload batch file
+            batch_file_path = self._create_batch_file(batch_requests)
+            file_id = self._upload_batch_file(batch_file_path)
+            
+            # Submit batch
+            batch_id = self._submit_batch(file_id)
+            
+            # Wait for completion
+            completed_batch = self._wait_for_batch_completion(batch_id)
+            
+            # Download and parse results
+            batch_results = self._download_batch_results(completed_batch)
+            parsed_results = self._parse_batch_results(batch_results)
+            
+            # Clean up batch file
+            os.remove(batch_file_path)
+        
+        # Organize results (same logic as before)
+        all_prompt_ratings = []
+        all_topical_ratings = []
+        all_vanilla_ratings = []
+        valid_entries = []
+        
+        for source_file, data in chunk_file_data:
+            for i, entry in enumerate(data):
+                prompt_custom_id = f"{source_file}_{i}_prompt"
+                topical_custom_id = f"{source_file}_{i}_topical_response"
+                vanilla_custom_id = f"{source_file}_{i}_vanilla_response"
+                
+                prompt_ratings = parsed_results.get(prompt_custom_id)
+                topical_ratings = parsed_results.get(topical_custom_id)
+                vanilla_ratings = parsed_results.get(vanilla_custom_id) if not self.skip_vanilla_responses else {}
+                
+                # Only include entries that have required rating types
+                valid_entry = prompt_ratings is not None and topical_ratings is not None
+                if not self.skip_vanilla_responses:
+                    valid_entry = valid_entry and vanilla_ratings is not None
+                
+                if valid_entry:
+                    all_prompt_ratings.append(prompt_ratings)
+                    all_topical_ratings.append(topical_ratings)
+                    if not self.skip_vanilla_responses:
+                        all_vanilla_ratings.append(vanilla_ratings)
+                    valid_entries.append((source_file, i, entry))
+        
+        # Normalize ratings
+        normalized_prompt_ratings = self._normalize_ratings(all_prompt_ratings)
+        normalized_topical_ratings = self._normalize_ratings(all_topical_ratings)
+        normalized_vanilla_ratings = self._normalize_ratings(all_vanilla_ratings) if not self.skip_vanilla_responses else []
+        
+        # Create enriched entries
+        chunk_enriched_data = []
+        for rating_index, (source_file, entry_index, entry) in enumerate(valid_entries):
+            enriched_entry = entry.copy()
+            
+            # Add normalized ratings
+            enriched_entry["prompt_normalized_ratings"] = normalized_prompt_ratings[rating_index]
+            enriched_entry["topical_response_normalized_ratings"] = normalized_topical_ratings[rating_index]
+            if not self.skip_vanilla_responses:
+                enriched_entry["vanilla_response_normalized_ratings"] = normalized_vanilla_ratings[rating_index]
+            
+            # Add metadata
+            enriched_entry["source_file"] = source_file
+            enriched_entry["evaluation_timestamp"] = datetime.now().isoformat()
+            enriched_entry["evaluation_model"] = self.gemma_model_name if self.use_local_gemma else self.model
+            enriched_entry["batch_id"] = batch_id
+            enriched_entry["chunk_offset"] = chunk_offset
+            
+            chunk_enriched_data.append(enriched_entry)
+        
+        return chunk_enriched_data
+    
     def save_mega_dataset(self, enriched_data: List[Dict[str, Any]]) -> str:
         """
         Save the mega dataset to a JSON file.
@@ -851,6 +1289,12 @@ Respond with ONLY a JSON object in this exact format:
         Returns:
             Path to saved file
         """
+        # If using chunked processing, the data is already saved incrementally
+        if self.chunk_size is not None and self.mega_dataset_initialized:
+            print(f"Data already saved incrementally to {self.mega_dataset_path}")
+            return str(self.mega_dataset_path)
+        
+        # Otherwise, save normally
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         output_file = self.output_dir / f"mega_dataset_evaluated_{timestamp}.json"
         
@@ -865,11 +1309,20 @@ Respond with ONLY a JSON object in this exact format:
         Create summary statistics about the evaluation results.
         
         Args:
-            enriched_data: List of enriched data entries
+            enriched_data: List of enriched data entries (if empty, loads from mega dataset file)
             
         Returns:
             Dictionary with summary statistics
         """
+        # If enriched_data is empty (from chunked processing), load from mega dataset file
+        if not enriched_data and self.mega_dataset_initialized and os.path.exists(self.mega_dataset_path):
+            with open(self.mega_dataset_path, 'r', encoding='utf-8') as f:
+                enriched_data = json.load(f)
+            print(f"Loaded {len(enriched_data)} entries from mega dataset for statistics")
+        
+        if not enriched_data:
+            return {"error": "No data available for statistics"}
+        
         df = pd.DataFrame(enriched_data)
         
         stats = {
@@ -885,10 +1338,14 @@ Respond with ONLY a JSON object in this exact format:
         
         # Calculate average ratings per adjective across all texts
         avg_ratings = {}
-        for rating_type in ["prompt_normalized_ratings", "vanilla_response_normalized_ratings", "topical_response_normalized_ratings"]:
+        rating_types = ["prompt_normalized_ratings", "topical_response_normalized_ratings"]
+        if not self.skip_vanilla_responses:
+            rating_types.append("vanilla_response_normalized_ratings")
+        
+        for rating_type in rating_types:
             avg_ratings[rating_type] = {}
             for adj in self.adjectives:
-                ratings = [entry[rating_type][adj] for entry in enriched_data if adj in entry[rating_type]]
+                ratings = [entry[rating_type][adj] for entry in enriched_data if rating_type in entry and adj in entry[rating_type]]
                 ratings = [r for r in ratings if r is not None]
                 print(f"Ratings for {adj}: {ratings}")
                 avg_ratings[rating_type][adj] = np.mean(ratings) if ratings else 0.0
@@ -897,10 +1354,10 @@ Respond with ONLY a JSON object in this exact format:
         
         # Calculate count of entries with exactly 0 and exactly 1 normalized scores
         extreme_scores = {}
-        for rating_type in ["prompt_normalized_ratings", "vanilla_response_normalized_ratings", "topical_response_normalized_ratings"]:
+        for rating_type in rating_types:
             extreme_scores[rating_type] = {}
             for adj in self.adjectives:
-                ratings = [entry[rating_type][adj] for entry in enriched_data if adj in entry[rating_type]]
+                ratings = [entry[rating_type][adj] for entry in enriched_data if rating_type in entry and adj in entry[rating_type]]
                 ratings = [r for r in ratings if r is not None]
                 count_zero = sum(1 for r in ratings if r == 0.0)
                 count_one = sum(1 for r in ratings if r == 1.0)
@@ -949,14 +1406,17 @@ def main():
     load_dotenv(override=True)
     
     parser = argparse.ArgumentParser(description="Evaluate adjective fit for synthetic data using OpenAI Batch API or local Gemma")
-    parser.add_argument("--data_dir", default="data/synthetic_data/outputs/20250629_134811", help="Directory containing JSON files to evaluate")
-    parser.add_argument("--output_dir", help="Output directory (default: data_dir/evaluated)")
+    parser.add_argument("--data_dir", default="data/self_obfuscation_v1_synthetic/outputs/20250730_215204_harmful_orgtest_ablit", help="Directory containing JSON files to evaluate")
+    parser.add_argument("--output_dir", help="Output directory (default: data/self_obfuscation_v1_synthetic_rating/outputs)")
     parser.add_argument("--model", default="gpt-4.1-nano", help="OpenAI model to use (default: gpt-4.1-nano, ignored if --use-gemma is set)")
     parser.add_argument("--subset", default=-1, type=int, dest="subset_size", help="Process only this many entries per file")
     parser.add_argument("--use-gemma", action="store_true", help="Use local Gemma model instead of OpenAI API")
     parser.add_argument("--gemma-model", default="gemma_2_9b_instruct", help="Name of the Gemma model to load (default: gemma_2_9b_instruct)")
     parser.add_argument("--resume-batch", dest="resume_batch_id", help="Resume processing from an existing batch ID")
     parser.add_argument("--check-batch", dest="check_batch_id", help="Check status of a batch ID and exit")
+    parser.add_argument("--chunk-size", type=int, help="Process data in chunks of this size, saving incrementally to mega dataset after each chunk")
+    parser.add_argument("--max-parallel-batches", type=int, default=10, help="Maximum number of OpenAI batches to run in parallel when using chunked processing (default: 5)")
+    parser.add_argument("--skip-vanilla-responses", action="store_true", help="Skip evaluation of vanilla responses entirely (only evaluate prompts and topical responses)")
     
     args = parser.parse_args()
     
@@ -978,6 +1438,19 @@ def main():
     if args.use_gemma and args.check_batch_id:
         print("Error: --check-batch cannot be used with --use-gemma")
         print("Batch checking is only available for OpenAI API processing")
+        return 1
+    
+    if args.chunk_size is not None and args.resume_batch_id:
+        print("Error: --chunk-size cannot be used with --resume-batch")
+        print("Chunked processing is not compatible with batch resumption")
+        return 1
+    
+    if args.chunk_size is not None and args.chunk_size <= 0:
+        print("Error: --chunk-size must be a positive integer")
+        return 1
+    
+    if args.max_parallel_batches <= 0:
+        print("Error: --max-parallel-batches must be a positive integer")
         return 1
     
     # Handle batch status check
@@ -1011,7 +1484,10 @@ def main():
         subset_size=args.subset_size if args.subset_size > 0 else None,
         use_local_gemma=args.use_gemma,
         gemma_model_name=args.gemma_model,
-        resume_batch_id=args.resume_batch_id
+        resume_batch_id=args.resume_batch_id,
+        chunk_size=args.chunk_size,
+        max_parallel_batches=args.max_parallel_batches,
+        skip_vanilla_responses=args.skip_vanilla_responses
     )
     
     # Run evaluation

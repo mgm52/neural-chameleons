@@ -714,10 +714,10 @@ def main():
     load_dotenv(override=True)
     
     parser = argparse.ArgumentParser(description="Create UltraChat mega dataset with adjective ratings using OpenAI Batch API")
-    parser.add_argument("--adjectives_data_dir", default="data/synthetic_data/outputs/20250629_134811", 
+    parser.add_argument("--adjectives_data_dir", default="data/self_obfuscation_v1_synthetic_rating/outputs/20250629_134811", 
                        help="Directory containing JSON files with adjectives as filenames")
-    parser.add_argument("--output_dir", default=".", help="Output directory (default: current directory)")
-    parser.add_argument("--model", default="gpt-4o-mini", help="OpenAI model to use (default: gpt-4o-mini)")
+    parser.add_argument("--output_dir", default="./outputs", help="Output directory (default: /outputs)")
+    parser.add_argument("--model", default="gpt-4.1-nano", help="OpenAI model to use (default: gpt-4.1-nano)")
     parser.add_argument("--num_conversations", default=2048, type=int, help="Number of UltraChat conversations to process")
     parser.add_argument("--resume-batch", dest="resume_batch_id", help="Resume processing from an existing batch ID")
     parser.add_argument("--check-batch", dest="check_batch_id", help="Check status of a batch ID and exit")
