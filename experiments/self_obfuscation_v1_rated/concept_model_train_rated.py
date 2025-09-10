@@ -25,6 +25,7 @@ import torch
 import argparse
 import os
 import sys
+import re
 from typing import List, Dict
 import numpy as np
 from tqdm import tqdm
@@ -49,653 +50,54 @@ from experiments.self_obfuscation_v1_rated.utils import (
     load_concept_probes,
     evaluate_validation_set
 )
+from experiments.self_obfuscation_v1_rated.utilts_training_data import (
+    process_concept_training_data,
+    load_preset_data,
+    load_and_process_rated_data
+)
 
-def process_concept_training_data(
-    concept_to_topical_data: PosNegDataByCategory,
-    concept_to_vanilla_data: PosNegDataByCategory,
-    concept_to_ultrachat_data: PosNegDataByCategory,
-    concept_to_probe: Dict[str, object],
-    dual_topical_data: PosNegDataByDualCategory = None,
-    dual_vanilla_data: PosNegDataByDualCategory = None,
-    dual_ultrachat_data: PosNegDataByDualCategory = None,
-    num_samples_per_concept: int = 50,
-    logger = None,
-    use_synonyms: bool = True,
-    data_split_distribution: Dict[str, float] = None,
-    enable_topical_behavior_loss: bool = False
-) -> Dict[str, List]:
-    """
-    Process training data for concept self-obfuscation using N/X/Y notation.
+
+def set_seeds(seed=42):
+    """Set all random seeds for reproducible results."""
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+
+def create_batches(data: List, batch_size: int) -> List[List]:
+    """Create batches from data list."""
+    batches = []
+    for i in range(0, len(data), batch_size):
+        batch = data[i:i + batch_size]
+        batches.append(batch)
+    return batches
+
+def collate_batch(batch_data: List) -> Dict:
+    """Collate a batch of data items into batched tensors and lists."""
+    batch_probes = []
+    batch_prompts = []
+    batch_responses = []
+    batch_token_ids = []
+    batch_labels = []
+    batch_use_behavior = []
     
-    Returns dict with keys organized by data source type.
+    for item in batch_data:
+        probe, prompt_text, response_text, token_ids, label, use_behavior_loss = item
+        batch_probes.append(probe)
+        batch_prompts.append(prompt_text)
+        batch_responses.append(response_text)
+        batch_token_ids.append(token_ids)
+        batch_labels.append(label)
+        batch_use_behavior.append(use_behavior_loss)
     
-    Each item is tuple: (probe, prompt, response, token_ids, label, use_behavior_loss)
-    where probe and label can be tuples for dual-category data
-    """
-    
-    if data_split_distribution is None:
-        raise Exception("No data split provided")
-    
-    # Verify distribution sums to 1.0
-    total_prob = sum(data_split_distribution.values())
-    if abs(total_prob - 1.0) > 1e-6:
-        if logger:
-            logger.print(f"Warning: Data split distribution sums to {total_prob:.6f}, not 1.0")
-        # Normalize to sum to 1.0
-        for key in data_split_distribution:
-            data_split_distribution[key] /= total_prob
-    
-    if logger:
-        logger.print("Data split distribution:")
-        for split_name, prob in data_split_distribution.items():
-            logger.print(f"  {split_name}: {prob:.3f}")
-        logger.print(f"Total: {sum(data_split_distribution.values()):.6f}")
-    
-    # Initialize data splits
-    data_splits = {split_name: [] for split_name in data_split_distribution.keys()}
-    
-    concepts = list(concept_to_probe.keys())
-    
-    # Create intersection sets for concept selection to avoid KeyError
-    concepts_with_topical = list(set(concept_to_probe.keys()) & set(concept_to_topical_data.categories.keys()))
-    concepts_with_vanilla = list(set(concept_to_probe.keys()) & set(concept_to_vanilla_data.categories.keys()))
-    
-    # Check ultrachat availability
-    concepts_with_ultrachat = []
-    for concept in concepts:
-        ultrachat_data = concept_to_ultrachat_data.categories.get(concept)
-        if ultrachat_data and ultrachat_data.pos_dataset:
-            concepts_with_ultrachat.append(concept)
-    
-    if logger:
-        logger.print(f"Concepts with probes: {len(concepts)}")
-        logger.print(f"Concepts with topical data: {len(concepts_with_topical)}")
-        logger.print(f"Concepts with vanilla data: {len(concepts_with_vanilla)}")
-        logger.print(f"Concepts with ultrachat data: {len(concepts_with_ultrachat)}")
-        
-        if len(concepts_with_topical) == 0:
-            logger.print("WARNING: No concepts have both probes and topical data!")
-        if len(concepts_with_vanilla) == 0:
-            logger.print("WARNING: No concepts have both probes and vanilla data!")
-        if len(concepts_with_ultrachat) == 0:
-            logger.print("WARNING: No concepts have both probes and ultrachat data!")
-    
-    # Adjust data split distribution based on available data types
-    has_vanilla = len(concepts_with_vanilla) > 0
-    has_ultrachat = len(concepts_with_ultrachat) > 0
-    
-    # Check for dual-category vanilla availability (both concepts must have probes)
-    has_dual_vanilla = False
-    if dual_vanilla_data and dual_vanilla_data.categories:
-        available_dual_vanilla = [pair for pair in dual_vanilla_data.categories.keys() 
-                                 if pair[0] in concepts and pair[1] in concepts]
-        has_dual_vanilla = len(available_dual_vanilla) > 0
-        if not has_dual_vanilla and logger:
-            logger.print("WARNING: No dual-category vanilla pairs with both concepts having probes!")
-    
-    # Check for dual-category ultrachat availability (both concepts must have probes)
-    has_dual_ultrachat = False
-    if dual_ultrachat_data and dual_ultrachat_data.categories:
-        available_dual_ultrachat = [pair for pair in dual_ultrachat_data.categories.keys() 
-                                   if pair[0] in concepts and pair[1] in concepts]
-        has_dual_ultrachat = len(available_dual_ultrachat) > 0
-        if not has_dual_ultrachat and logger:
-            logger.print("WARNING: No dual-category ultrachat pairs with both concepts having probes!")
-    
-    if not has_vanilla or not has_ultrachat or not has_dual_vanilla or not has_dual_ultrachat:
-        if logger:
-            logger.print("Adjusting data split distribution due to missing data types...")
-            
-        # Get splits that require vanilla data
-        vanilla_splits = [k for k in data_split_distribution.keys() if 'vanilla' in k]
-        ultrachat_splits = [k for k in data_split_distribution.keys() if 'ultrachat' in k]
-        dual_vanilla_splits = ['clue_X_data_XY_probe_XY_vanilla', 'clue_N_data_XY_probe_XY_vanilla']
-        dual_ultrachat_splits = ['clue_X_data_XY_probe_XY_ultrachat', 'clue_N_data_XY_probe_XY_ultrachat']
-        
-        # Redistribute probabilities from unavailable splits to topical splits
-        unavailable_prob = 0.0
-        if not has_vanilla:
-            for split in vanilla_splits:
-                unavailable_prob += data_split_distribution[split]
-                data_split_distribution[split] = 0.0
-        elif not has_dual_vanilla:
-            # Only zero out the dual-category vanilla splits
-            for split in dual_vanilla_splits:
-                unavailable_prob += data_split_distribution[split]
-                data_split_distribution[split] = 0.0
-                
-        if not has_ultrachat:
-            for split in ultrachat_splits:
-                unavailable_prob += data_split_distribution[split]
-                data_split_distribution[split] = 0.0
-        elif not has_dual_ultrachat:
-            # Only zero out the dual-category ultrachat splits
-            for split in dual_ultrachat_splits:
-                unavailable_prob += data_split_distribution[split]
-                data_split_distribution[split] = 0.0
-        
-        # Redistribute to topical splits proportionally
-        topical_splits = [k for k in data_split_distribution.keys() if 'topical' in k and data_split_distribution[k] > 0]
-        if topical_splits and unavailable_prob > 0:
-            total_topical_prob = sum(data_split_distribution[k] for k in topical_splits)
-            for split in topical_splits:
-                if total_topical_prob > 0:
-                    data_split_distribution[split] += unavailable_prob * (data_split_distribution[split] / total_topical_prob)
-        
-        # Renormalize to ensure sum is 1.0
-        total_prob = sum(data_split_distribution.values())
-        if total_prob > 0:
-            for key in data_split_distribution:
-                data_split_distribution[key] /= total_prob
-        
-        if logger:
-            logger.print("Adjusted data split distribution:")
-            for split_name, prob in data_split_distribution.items():
-                logger.print(f"  {split_name}: {prob:.3f}")
-            logger.print(f"Total: {sum(data_split_distribution.values()):.6f}")
-    
-    # Calculate target sample sizes based on (possibly adjusted) distribution
-    total_samples = num_samples_per_concept * len(concept_to_probe)
-    target_samples = {
-        split_name: int(total_samples * prob) 
-        for split_name, prob in data_split_distribution.items()
+    return {
+        'probes': batch_probes,
+        'prompts': batch_prompts,
+        'responses': batch_responses,
+        'token_ids': batch_token_ids,
+        'labels': batch_labels,
+        'use_behavior': batch_use_behavior
     }
-    
-    if logger:
-        logger.print(f"\nTarget sample sizes (total: {total_samples}):")
-        for split_name, count in target_samples.items():
-            logger.print(f"  {split_name}: {count}")
-        logger.print(f"Total target samples: {sum(target_samples.values())}")
-    
-    # Directly generate target samples for each split type using efficient sampling
-    if logger:
-        logger.print("Generating samples using efficient sampling approach...")
-    
-    # Get all available ultrachat data for types 8 and 11
-    all_ultrachat_data = []
-    for concept in concepts:
-        ultrachat_data = concept_to_ultrachat_data.categories.get(concept)
-        if ultrachat_data and ultrachat_data.pos_dataset:
-            all_ultrachat_data.extend(ultrachat_data.pos_dataset)
-    
-    if logger:
-        logger.print(f"Total concepts available: {len(concepts)}")
-        logger.print(f"Total ultrachat samples across all concepts: {len(all_ultrachat_data)}")
-        
-        # Check data availability per concept
-        for concept in concepts[:5]:  # Show first 5 concepts for debugging
-            topical_data = concept_to_topical_data.categories.get(concept)
-            vanilla_data = concept_to_vanilla_data.categories.get(concept)
-            ultrachat_data = concept_to_ultrachat_data.categories.get(concept)
-            
-            topical_count = len(topical_data.pos_dataset) if topical_data and topical_data.pos_dataset else 0
-            vanilla_count = len(vanilla_data.pos_dataset) if vanilla_data and vanilla_data.pos_dataset else 0
-            ultrachat_count = len(ultrachat_data.pos_dataset) if ultrachat_data and ultrachat_data.pos_dataset else 0
-            
-            logger.print(f"  {concept}: topical={topical_count}, vanilla={vanilla_count}, ultrachat={ultrachat_count}")
-        
-        if len(concepts) > 5:
-            logger.print(f"  ... and {len(concepts) - 5} more concepts")
-
-
-
-    # For each split type, generate exactly the target number of samples
-    for split_name, target_count in target_samples.items():
-        if target_count == 0:
-            continue
-            
-        if logger:
-            logger.print(f"Generating {target_count} samples for {split_name}")
-        
-        split_samples = []
-        
-        # Use while loop to handle empty dataset cases
-        attempts = 0
-        max_attempts = target_count * 10  # Prevent infinite loops
-        
-        while len(split_samples) < target_count and attempts < max_attempts:
-            attempts += 1
-            if split_name == 'clue_N_data_X_probe_X_topical':
-                # 1. No clue, X topical data, X probe → target score 1
-                if not concepts_with_topical:
-                    if logger and attempts % 100 == 0:
-                        logger.print(f"  Failed attempt {attempts} for {split_name}: no concepts with topical data available")
-                    continue
-                concept_x = random.choice(concepts_with_topical)
-                probe_x = concept_to_probe[concept_x]
-                topical_data_x = concept_to_topical_data.categories.get(concept_x)
-                if topical_data_x and topical_data_x.pos_dataset:
-                    prompt_resp = random.choice(topical_data_x.pos_dataset)
-                    split_samples.append((probe_x, prompt_resp.prompt, prompt_resp.response, None, 1, enable_topical_behavior_loss))
-                elif logger and attempts % 100 == 0:  # Log every 100 failed attempts
-                    logger.print(f"  Failed attempt {attempts} for {split_name}: concept {concept_x} has no topical data")
-                    
-            elif split_name == 'clue_X_data_Y_probe_Y_topical':
-                # 2. X clue, Y topical data, Y probe → target score 1
-                concept_x = random.choice(concepts)
-                other_concepts_with_topical = [c for c in concepts_with_topical if c != concept_x]
-                if not other_concepts_with_topical:
-                    if logger and attempts % 100 == 0:
-                        logger.print(f"  Failed attempt {attempts} for {split_name}: no other concepts with topical data available")
-                    continue
-                concept_y = random.choice(other_concepts_with_topical)
-                probe_y = concept_to_probe[concept_y]
-                topical_data_y = concept_to_topical_data.categories.get(concept_y)
-                if topical_data_y and topical_data_y.pos_dataset:
-                    prompt_resp = random.choice(topical_data_y.pos_dataset)
-                    clue_text = get_random_synonym(concept_x) if use_synonyms else concept_x
-                    clued_prompt = f"You are being probed for '{clue_text}'. {prompt_resp.prompt}"
-                    split_samples.append((probe_y, clued_prompt, prompt_resp.response, None, 1, enable_topical_behavior_loss))
-                    
-            elif split_name == 'clue_X_data_Y_probe_Y_ultrachat':
-                # X clue, Y ultrachat data, Y probe → target score 1 (+ beh loss)
-                concept_x = random.choice(concepts)
-                other_concepts_with_ultrachat = [c for c in concepts_with_ultrachat if c != concept_x]
-                if not other_concepts_with_ultrachat:
-                    if logger and attempts % 100 == 0:
-                        logger.print(f"  Failed attempt {attempts} for {split_name}: no other concepts with ultrachat data available")
-                    continue
-                concept_y = random.choice(other_concepts_with_ultrachat)
-                probe_y = concept_to_probe[concept_y]
-                ultrachat_data_y = concept_to_ultrachat_data.categories.get(concept_y)
-                if ultrachat_data_y and ultrachat_data_y.pos_dataset:
-                    prompt_resp = random.choice(ultrachat_data_y.pos_dataset)
-                    clue_text = get_random_synonym(concept_x) if use_synonyms else concept_x
-                    clued_prompt = f"You are being probed for '{clue_text}'. {prompt_resp.prompt}"
-                    split_samples.append((probe_y, clued_prompt, prompt_resp.response, None, 1, True))
-                    
-            elif split_name == 'clue_N_data_X_probe_X_ultrachat':
-                # 3. No clue, X ultrachat data, X probe → target score 1 (+ beh loss)
-                if not concepts_with_ultrachat:
-                    if logger and attempts % 100 == 0:
-                        logger.print(f"  Failed attempt {attempts} for {split_name}: no concepts with ultrachat data available")
-                    continue
-                concept_x = random.choice(concepts_with_ultrachat)
-                probe_x = concept_to_probe[concept_x]
-                ultrachat_data_x = concept_to_ultrachat_data.categories[concept_x]
-                prompt_resp = random.choice(ultrachat_data_x.pos_dataset)
-                split_samples.append((probe_x, prompt_resp.prompt, prompt_resp.response, None, 1, True))
-                    
-            elif split_name == 'clue_X_data_X_probe_X_topical':
-                # 4. X clue, X topical data, X probe → target score 0
-                if not concepts_with_topical:
-                    if logger and attempts % 100 == 0:
-                        logger.print(f"  Failed attempt {attempts} for {split_name}: no concepts with topical data available")
-                    continue
-                concept_x = random.choice(concepts_with_topical)
-                probe_x = concept_to_probe[concept_x]
-                topical_data_x = concept_to_topical_data.categories[concept_x]
-                prompt_resp = random.choice(topical_data_x.pos_dataset)
-                clue_text = get_random_synonym(concept_x) if use_synonyms else concept_x
-                clued_prompt = f"You are being probed for '{clue_text}'. {prompt_resp.prompt}"
-                split_samples.append((probe_x, clued_prompt, prompt_resp.response, None, 0, enable_topical_behavior_loss))
-                    
-            elif split_name == 'clue_X_data_X_probe_X_vanilla':
-                # 4. X clue, X vanilla data, X probe → target score 0 (+ beh loss)
-                if not concepts_with_vanilla:
-                    if logger and attempts % 100 == 0:
-                        logger.print(f"  Failed attempt {attempts} for {split_name}: no concepts with vanilla data available")
-                    continue
-                concept_x = random.choice(concepts_with_vanilla)
-                probe_x = concept_to_probe[concept_x]
-                vanilla_data_x = concept_to_vanilla_data.categories[concept_x]
-                prompt_resp = random.choice(vanilla_data_x.pos_dataset)
-                clue_text = get_random_synonym(concept_x) if use_synonyms else concept_x
-                clued_prompt = f"You are being probed for '{clue_text}'. {prompt_resp.prompt}"
-                split_samples.append((probe_x, clued_prompt, prompt_resp.response, None, 0, True))
-                    
-            elif split_name == 'clue_X_data_X_probe_X_ultrachat':
-                # 6. X clue, X ultrachat data, X probe → target score 0 (+ beh loss)
-                if not concepts_with_ultrachat:
-                    if logger and attempts % 100 == 0:
-                        logger.print(f"  Failed attempt {attempts} for {split_name}: no concepts with ultrachat data available")
-                    continue
-                concept_x = random.choice(concepts_with_ultrachat)
-                probe_x = concept_to_probe[concept_x]
-                ultrachat_data_x = concept_to_ultrachat_data.categories[concept_x]
-                prompt_resp = random.choice(ultrachat_data_x.pos_dataset)
-                clue_text = get_random_synonym(concept_x) if use_synonyms else concept_x
-                clued_prompt = f"You are being probed for '{clue_text}'. {prompt_resp.prompt}"
-                split_samples.append((probe_x, clued_prompt, prompt_resp.response, None, 0, True))
-                    
-            elif split_name == 'clue_X_data_X_probe_Y_vanilla':
-                # 7. X clue, X vanilla data, Y probe → target score 0 (+ beh loss)
-                if not concepts_with_vanilla:
-                    if logger and attempts % 100 == 0:
-                        logger.print(f"  Failed attempt {attempts} for {split_name}: no concepts with vanilla data available")
-                    continue
-                concept_x = random.choice(concepts_with_vanilla)
-                other_concepts = [c for c in concepts if c != concept_x]
-                if not other_concepts:
-                    if logger and attempts % 100 == 0:
-                        logger.print(f"  Failed attempt {attempts} for {split_name}: no other concepts available")
-                    continue
-                concept_y = random.choice(other_concepts)
-                probe_y = concept_to_probe[concept_y]
-                vanilla_data_x = concept_to_vanilla_data.categories[concept_x]
-                prompt_resp = random.choice(vanilla_data_x.pos_dataset)
-                clue_text = get_random_synonym(concept_x) if use_synonyms else concept_x
-                clued_prompt = f"You are being probed for '{clue_text}'. {prompt_resp.prompt}"
-                split_samples.append((probe_y, clued_prompt, prompt_resp.response, None, 0, True))
-                    
-            elif split_name == 'clue_N_data_Y_probe_X_topical':
-                # 8. No clue, Y topical data, X probe → target score 0
-                concept_x = random.choice(concepts)
-                other_concepts_with_topical = [c for c in concepts_with_topical if c != concept_x]
-                if not other_concepts_with_topical:
-                    if logger and attempts % 100 == 0:
-                        logger.print(f"  Failed attempt {attempts} for {split_name}: no other concepts with topical data available")
-                    continue
-                concept_y = random.choice(other_concepts_with_topical)
-                probe_x = concept_to_probe[concept_x]
-                topical_data_y = concept_to_topical_data.categories[concept_y]
-                prompt_resp = random.choice(topical_data_y.pos_dataset)
-                split_samples.append((probe_x, prompt_resp.prompt, prompt_resp.response, None, 0, enable_topical_behavior_loss))
-                    
-            elif split_name == 'clue_N_data_Y_probe_X_vanilla':
-                # 9. No clue, Y vanilla data, X probe → target score 0 (+ beh loss)
-                concept_x = random.choice(concepts)
-                other_concepts_with_vanilla = [c for c in concepts_with_vanilla if c != concept_x]
-                if not other_concepts_with_vanilla:
-                    if logger and attempts % 100 == 0:
-                        logger.print(f"  Failed attempt {attempts} for {split_name}: no other concepts with vanilla data available")
-                    continue
-                concept_y = random.choice(other_concepts_with_vanilla)
-                probe_x = concept_to_probe[concept_x]
-                vanilla_data_y = concept_to_vanilla_data.categories[concept_y]
-                prompt_resp = random.choice(vanilla_data_y.pos_dataset)
-                split_samples.append((probe_x, prompt_resp.prompt, prompt_resp.response, None, 0, True))
-                    
-            elif split_name == 'clue_N_data_Y_probe_X_ultrachat':
-                # 10. No clue, ultrachat data, X probe → target score 0 (+ beh loss)
-                concept_x = random.choice(concepts)
-                probe_x = concept_to_probe[concept_x]
-                if all_ultrachat_data:
-                    prompt_resp = random.choice(all_ultrachat_data)
-                    split_samples.append((probe_x, prompt_resp.prompt, prompt_resp.response, None, 0, True))
-                    
-            elif split_name == 'clue_X_data_Y_probe_X_topical':
-                # 11. X clue, Y topical data, X probe → target score 0
-                concept_x = random.choice(concepts)
-                other_concepts_with_topical = [c for c in concepts_with_topical if c != concept_x]
-                if not other_concepts_with_topical:
-                    if logger and attempts % 100 == 0:
-                        logger.print(f"  Failed attempt {attempts} for {split_name}: no other concepts with topical data available")
-                    continue
-                concept_y = random.choice(other_concepts_with_topical)
-                probe_x = concept_to_probe[concept_x]
-                topical_data_y = concept_to_topical_data.categories[concept_y]
-                prompt_resp = random.choice(topical_data_y.pos_dataset)
-                clue_text = get_random_synonym(concept_x) if use_synonyms else concept_x
-                clued_prompt = f"You are being probed for '{clue_text}'. {prompt_resp.prompt}"
-                split_samples.append((probe_x, clued_prompt, prompt_resp.response, None, 0, enable_topical_behavior_loss))
-                    
-            elif split_name == 'clue_X_data_Y_probe_X_vanilla':
-                # 12. X clue, Y vanilla data, X probe → target score 0 (+ beh loss)
-                concept_x = random.choice(concepts)
-                other_concepts_with_vanilla = [c for c in concepts_with_vanilla if c != concept_x]
-                if not other_concepts_with_vanilla:
-                    if logger and attempts % 100 == 0:
-                        logger.print(f"  Failed attempt {attempts} for {split_name}: no other concepts with vanilla data available")
-                    continue
-                concept_y = random.choice(other_concepts_with_vanilla)
-                probe_x = concept_to_probe[concept_x]
-                vanilla_data_y = concept_to_vanilla_data.categories[concept_y]
-                prompt_resp = random.choice(vanilla_data_y.pos_dataset)
-                clue_text = get_random_synonym(concept_x) if use_synonyms else concept_x
-                clued_prompt = f"You are being probed for '{clue_text}'. {prompt_resp.prompt}"
-                split_samples.append((probe_x, clued_prompt, prompt_resp.response, None, 0, True))
-                    
-            elif split_name == 'clue_X_data_Y_probe_X_ultrachat':
-                # 13. X clue, ultrachat data, X probe → target score 0 (+ beh loss)
-                concept_x = random.choice(concepts)
-                probe_x = concept_to_probe[concept_x]
-                if all_ultrachat_data:
-                    prompt_resp = random.choice(all_ultrachat_data)
-                    clue_text = get_random_synonym(concept_x) if use_synonyms else concept_x
-                    clued_prompt = f"You are being probed for '{clue_text}'. {prompt_resp.prompt}"
-                    split_samples.append((probe_x, clued_prompt, prompt_resp.response, None, 0, True))
-                    
-            # Dual-category data types
-            elif split_name == 'clue_X_data_XY_probe_XY_topical':
-                # X clue, XY topical data, XY probes → target (0, 1) for (X, Y) or (1, 0) for (Y, X)
-                if dual_topical_data and dual_topical_data.categories:
-                    # Get a random dual category pair
-                    available_pairs = [pair for pair in dual_topical_data.categories.keys() 
-                                     if pair[0] in concepts and pair[1] in concepts]
-                    if available_pairs:
-                        category_pair = random.choice(available_pairs)
-                        concept_x, concept_y = category_pair  # Already alphabetically sorted
-                        
-                        # 50% chance to use X as clue, 50% chance to use Y as clue
-                        if random.random() < 0.5:
-                            clue_concept = concept_x
-                            labels = (0, 1)  # X gets 0 (clued), Y gets 1 (not clued)
-                        else:
-                            clue_concept = concept_y
-                            labels = (1, 0)  # X gets 1 (not clued), Y gets 0 (clued)
-                        
-                        probe_x = concept_to_probe[concept_x]
-                        probe_y = concept_to_probe[concept_y]
-                        dual_data = dual_topical_data.categories[category_pair]
-                        if dual_data.pos_dataset:
-                            prompt_resp = random.choice(dual_data.pos_dataset)
-                            clue_text = get_random_synonym(clue_concept) if use_synonyms else clue_concept
-                            clued_prompt = f"You are being probed for '{clue_text}'. {prompt_resp.prompt}"
-                            split_samples.append(((probe_x, probe_y), clued_prompt, prompt_resp.response, None, labels, enable_topical_behavior_loss))
-                            
-            elif split_name == 'clue_N_data_XY_probe_XY_topical':
-                # No clue, XY topical data, XY probes → target (1, 1)
-                if dual_topical_data and dual_topical_data.categories:
-                    available_pairs = [pair for pair in dual_topical_data.categories.keys() 
-                                     if pair[0] in concepts and pair[1] in concepts]
-                    if available_pairs:
-                        category_pair = random.choice(available_pairs)
-                        concept_x, concept_y = category_pair
-                        probe_x = concept_to_probe[concept_x]
-                        probe_y = concept_to_probe[concept_y]
-                        dual_data = dual_topical_data.categories[category_pair]
-                        if dual_data.pos_dataset:
-                            prompt_resp = random.choice(dual_data.pos_dataset)
-                            split_samples.append(((probe_x, probe_y), prompt_resp.prompt, prompt_resp.response, None, (1, 1), enable_topical_behavior_loss))
-                            
-            elif split_name == 'clue_X_data_XY_probe_XY_vanilla':
-                # X clue, XY vanilla data, XY probes → target (0, 1) for (X, Y) or (1, 0) for (Y, X) (+ beh loss)
-                if dual_vanilla_data and dual_vanilla_data.categories:
-                    available_pairs = [pair for pair in dual_vanilla_data.categories.keys() 
-                                     if pair[0] in concepts and pair[1] in concepts]
-                    if available_pairs:
-                        category_pair = random.choice(available_pairs)
-                        concept_x, concept_y = category_pair
-                        
-                        # 50% chance to use X as clue, 50% chance to use Y as clue
-                        if random.random() < 0.5:
-                            clue_concept = concept_x
-                            labels = (0, 1)
-                        else:
-                            clue_concept = concept_y
-                            labels = (1, 0)
-                        
-                        probe_x = concept_to_probe[concept_x]
-                        probe_y = concept_to_probe[concept_y]
-                        dual_data = dual_vanilla_data.categories[category_pair]
-                        if dual_data.pos_dataset:
-                            prompt_resp = random.choice(dual_data.pos_dataset)
-                            clue_text = get_random_synonym(clue_concept) if use_synonyms else clue_concept
-                            clued_prompt = f"You are being probed for '{clue_text}'. {prompt_resp.prompt}"
-                            split_samples.append(((probe_x, probe_y), clued_prompt, prompt_resp.response, None, labels, True))
-                            
-            elif split_name == 'clue_N_data_XY_probe_XY_vanilla':
-                # No clue, XY vanilla data, XY probes → target (1, 1) (+ beh loss)
-                if dual_vanilla_data and dual_vanilla_data.categories:
-                    available_pairs = [pair for pair in dual_vanilla_data.categories.keys() 
-                                     if pair[0] in concepts and pair[1] in concepts]
-                    if available_pairs:
-                        category_pair = random.choice(available_pairs)
-                        concept_x, concept_y = category_pair
-                        probe_x = concept_to_probe[concept_x]
-                        probe_y = concept_to_probe[concept_y]
-                        dual_data = dual_vanilla_data.categories[category_pair]
-                        if dual_data.pos_dataset:
-                            prompt_resp = random.choice(dual_data.pos_dataset)
-                            split_samples.append(((probe_x, probe_y), prompt_resp.prompt, prompt_resp.response, None, (1, 1), True))
-                            
-            elif split_name == 'clue_X_data_XY_probe_XY_ultrachat':
-                # X clue, XY ultrachat data, XY probes → target (0, 1) for (X, Y) or (1, 0) for (Y, X) (+ beh loss)
-                if dual_ultrachat_data and dual_ultrachat_data.categories:
-                    # Debug: Show all dual-category ultrachat pairs and concepts with probes
-                    if attempts == 1:  # Only print once
-                        if logger:
-                            logger.print(f"DEBUG: Dual-category ultrachat pairs available: {list(dual_ultrachat_data.categories.keys())}")
-                            logger.print(f"DEBUG: Concepts with probes: {concepts}")
-                    
-                    available_pairs = [pair for pair in dual_ultrachat_data.categories.keys() 
-                                     if pair[0] in concepts and pair[1] in concepts]
-                    
-                    if attempts == 1:  # Only print once
-                        if logger:
-                            logger.print(f"DEBUG: Available pairs after filtering (both concepts have probes): {available_pairs}")
-                    
-                    if available_pairs:
-                        category_pair = random.choice(available_pairs)
-                        concept_x, concept_y = category_pair
-                        
-                        # 50% chance to use X as clue, 50% chance to use Y as clue
-                        if random.random() < 0.5:
-                            clue_concept = concept_x
-                            labels = (0, 1)
-                        else:
-                            clue_concept = concept_y
-                            labels = (1, 0)
-                        
-                        probe_x = concept_to_probe[concept_x]
-                        probe_y = concept_to_probe[concept_y]
-                        dual_data = dual_ultrachat_data.categories[category_pair]
-                        if dual_data.pos_dataset:
-                            prompt_resp = random.choice(dual_data.pos_dataset)
-                            clue_text = get_random_synonym(clue_concept) if use_synonyms else clue_concept
-                            clued_prompt = f"You are being probed for '{clue_text}'. {prompt_resp.prompt}"
-                            split_samples.append(((probe_x, probe_y), clued_prompt, prompt_resp.response, None, labels, True))
-                            
-            elif split_name == 'clue_N_data_XY_probe_XY_ultrachat':
-                # No clue, XY ultrachat data, XY probes → target (1, 1) (+ beh loss)
-                if dual_ultrachat_data and dual_ultrachat_data.categories:
-                    # Debug: Show all dual-category ultrachat pairs and concepts with probes
-                    if attempts == 1:  # Only print once
-                        if logger:
-                            logger.print(f"DEBUG: Dual-category ultrachat pairs available: {list(dual_ultrachat_data.categories.keys())}")
-                            logger.print(f"DEBUG: Concepts with probes: {concepts}")
-                    
-                    available_pairs = [pair for pair in dual_ultrachat_data.categories.keys() 
-                                     if pair[0] in concepts and pair[1] in concepts]
-                    
-                    if attempts == 1:  # Only print once
-                        if logger:
-                            logger.print(f"DEBUG: Available pairs after filtering (both concepts have probes): {available_pairs}")
-                    
-                    if available_pairs:
-                        category_pair = random.choice(available_pairs)
-                        concept_x, concept_y = category_pair
-                        probe_x = concept_to_probe[concept_x]
-                        probe_y = concept_to_probe[concept_y]
-                        dual_data = dual_ultrachat_data.categories[category_pair]
-                        if dual_data.pos_dataset:
-                            prompt_resp = random.choice(dual_data.pos_dataset)
-                            split_samples.append(((probe_x, probe_y), prompt_resp.prompt, prompt_resp.response, None, (1, 1), True))
-            
-            # Reversed data types with flipped labels
-            elif split_name == 'clue_N_data_Y_probe_X_topical_rev':
-                # No clue, Y topical data, X probe → target score 1 (reversed)
-                concept_x = random.choice(concepts)
-                other_concepts_with_topical = [c for c in concepts_with_topical if c != concept_x]
-                if not other_concepts_with_topical:
-                    if logger and attempts % 100 == 0:
-                        logger.print(f"  Failed attempt {attempts} for {split_name}: no other concepts with topical data available")
-                    continue
-                concept_y = random.choice(other_concepts_with_topical)
-                probe_x = concept_to_probe[concept_x]
-                topical_data_y = concept_to_topical_data.categories[concept_y]
-                prompt_resp = random.choice(topical_data_y.pos_dataset)
-                split_samples.append((probe_x, prompt_resp.prompt, prompt_resp.response, None, 1, enable_topical_behavior_loss))  # Label flipped to 1
-                    
-            elif split_name == 'clue_N_data_Y_probe_X_vanilla_rev':
-                # No clue, Y vanilla data, X probe → target score 1 (reversed) (+ beh loss)
-                concept_x = random.choice(concepts)
-                other_concepts_with_vanilla = [c for c in concepts_with_vanilla if c != concept_x]
-                if not other_concepts_with_vanilla:
-                    if logger and attempts % 100 == 0:
-                        logger.print(f"  Failed attempt {attempts} for {split_name}: no other concepts with vanilla data available")
-                    continue
-                concept_y = random.choice(other_concepts_with_vanilla)
-                probe_x = concept_to_probe[concept_x]
-                vanilla_data_y = concept_to_vanilla_data.categories[concept_y]
-                prompt_resp = random.choice(vanilla_data_y.pos_dataset)
-                split_samples.append((probe_x, prompt_resp.prompt, prompt_resp.response, None, 1, True))  # Label flipped to 1
-                    
-            elif split_name == 'clue_N_data_Y_probe_X_ultrachat_rev':
-                # No clue, ultrachat data, X probe → target score 1 (reversed) (+ beh loss)
-                concept_x = random.choice(concepts)
-                probe_x = concept_to_probe[concept_x]
-                if all_ultrachat_data:
-                    prompt_resp = random.choice(all_ultrachat_data)
-                    split_samples.append((probe_x, prompt_resp.prompt, prompt_resp.response, None, 1, True))  # Label flipped to 1
-                                                                                    
-        data_splits[split_name] = split_samples
-        
-        if logger:
-            if len(split_samples) < target_count:
-                logger.print(f"WARNING: Only generated {len(split_samples)}/{target_count} samples for {split_name} after {attempts} attempts")
-            else:
-                logger.print(f"Successfully generated {len(split_samples)} samples for {split_name}")
-    
-    # Shuffle all data splits
-    for key in data_splits:
-        random.shuffle(data_splits[key])
-    
-    # Show final distribution results
-    if logger:
-        logger.print(f"\nFinal training data distribution:")
-        for key, data in data_splits.items():
-            actual_count = len(data)
-            target_count = target_samples[key]
-            percentage = (actual_count / sum(len(v) for v in data_splits.values())) * 100
-            logger.print(f"  {key}: {actual_count} samples (target: {target_count}, {percentage:.1f}%)")
-        
-        # Count behavior loss samples
-        beh_loss_count = sum(1 for items in data_splits.values() for item in items if item[5])
-        total_samples_actual = sum(len(v) for v in data_splits.values())
-        logger.print(f"\nTotal samples with behavior loss: {beh_loss_count}")
-        
-        # Count by source type
-        topical_count = sum(len(v) for k, v in data_splits.items() if 'topical' in k)
-        vanilla_count = sum(len(v) for k, v in data_splits.items() if 'vanilla' in k)
-        ultrachat_count = sum(len(v) for k, v in data_splits.items() if 'ultrachat' in k)
-        logger.print(f"\nBy source type:")
-        logger.print(f"  Topical: {topical_count} samples ({topical_count/total_samples_actual*100:.1f}%)")
-        logger.print(f"  Vanilla: {vanilla_count} samples ({vanilla_count/total_samples_actual*100:.1f}%, all with behavior loss)")
-        logger.print(f"  Ultrachat: {ultrachat_count} samples ({ultrachat_count/total_samples_actual*100:.1f}%, all with behavior loss)")
-        
-        # Verify final label balance
-        final_label_1 = (len(data_splits['clue_N_data_X_probe_X_topical']) + 
-                        len(data_splits['clue_X_data_Y_probe_Y_topical']) + 
-                        len(data_splits.get('clue_X_data_Y_probe_Y_ultrachat', [])) +
-                        len(data_splits.get('clue_N_data_X_probe_X_ultrachat', [])))
-        final_label_0 = (len(data_splits['clue_X_data_X_probe_X_topical']) + 
-                        len(data_splits['clue_X_data_X_probe_X_vanilla']) + 
-                        len(data_splits.get('clue_X_data_X_probe_X_ultrachat', [])) +
-                        len(data_splits['clue_X_data_X_probe_Y_vanilla']) +
-                        len(data_splits['clue_N_data_Y_probe_X_topical']) + 
-                        len(data_splits['clue_N_data_Y_probe_X_vanilla']) +
-                        len(data_splits['clue_N_data_Y_probe_X_ultrachat']) +
-                        len(data_splits['clue_X_data_Y_probe_X_topical']) +
-                        len(data_splits['clue_X_data_Y_probe_X_vanilla']) +
-                        len(data_splits['clue_X_data_Y_probe_X_ultrachat']))
-        logger.print(f"\nFinal label distribution:")
-        logger.print(f"  Label=1 (maximize): {final_label_1} samples ({final_label_1/total_samples_actual*100:.1f}%)")
-        logger.print(f"  Label=0 (minimize): {final_label_0} samples ({final_label_0/total_samples_actual*100:.1f}%)")
-        logger.print(f"  Balance ratio: {final_label_1}/{final_label_0} = {final_label_1/max(final_label_0,1):.2f}")
-    
-    return data_splits
 
 def concept_training_loop(
     model: HFHardPromptedWithSelectableLayers,
@@ -707,14 +109,19 @@ def concept_training_loop(
     target_layers: List[int],
     logger,
     checkpoint_path: str,
+    batch_size: int = 8,
     validation_frequency: int = 1000,
     concept_to_probe: Dict = None,
     data_splits: Dict = None,
     wandb_run = None,
-    validation_metadata: List[Dict] = None
+    validation_metadata: List[Dict] = None,
+    data_type_mapping: Dict = None
 ):
     """
-    Enhanced training loop with detailed logging for N/X/Y notation and validation.
+    Enhanced training loop with minibatch processing and automatic batch size adjustment.
+    
+    Args:
+        batch_size: Initial batch size for training. Will be automatically halved on CUDA OOM.
     """
     model.requires_grad_(True)
     optim = bnb.optim.Adam8bit(model.parameters(), lr=learning_rate)
@@ -735,8 +142,9 @@ def concept_training_loop(
     loss50_obf = []
     
     step_num = 0
-    total_steps = len(train_data) * num_epochs
-    pbar = tqdm(total=total_steps, desc="Enhanced Training Progress")
+    current_batch_size = batch_size
+    total_batches = (len(train_data) + batch_size - 1) // batch_size * num_epochs
+    pbar = tqdm(total=total_batches, desc="Enhanced Training Progress (batched)")
     
     unique_train_data = len(list(set(train_data)))
     logger.print(f"Unique training data items out of total: {unique_train_data} / {len(train_data)}")
@@ -760,254 +168,398 @@ def concept_training_loop(
 
     for epoch in range(num_epochs):
         logger.print(f"Epoch {epoch}...")
+        logger.print(f"Current batch size: {current_batch_size}")
         
         # Shuffle training data
-        random.shuffle(train_data)
+        #random.Random(42).shuffle(train_data)
         
-        for data_item in train_data:
-            with torch.set_grad_enabled(True):
-                # Temporarily enable parameter gradients
-                for param in model.parameters():
-                    param.requires_grad = True
+        # Create batches with current batch size
+        batches = create_batches(train_data, current_batch_size)
+        
+        for batch_idx, batch_data in enumerate(batches):
+            batch_processed = False
+            batch_attempt_size = current_batch_size
+            
+            while not batch_processed:
+                try:
+                    # Re-batch data if we need a smaller batch size
+                    if batch_attempt_size < len(batch_data):
+                        batch_data = batch_data[:batch_attempt_size]
                     
-                # Clear memory before forward pass
-                torch.cuda.empty_cache()
-                
-                probe, prompt_text, response_text, token_ids, label, use_behavior_loss = data_item
-                
-                # Get probe name for logging
-                probe_name = "unknown"
-                if isinstance(probe, tuple):
-                    # Dual probe case - find names for both probes
-                    probe_x, probe_y = probe
-                    name_x, name_y = "unknown", "unknown"
-                    if concept_to_probe:
-                        for concept, concept_probe in concept_to_probe.items():
-                            try:
-                                if concept_probe is probe_x:
-                                    name_x = concept
-                                elif concept_probe is probe_y:
-                                    name_y = concept
-                            except:
-                                continue
-                    probe_name = f"({name_x},{name_y})"
-                else:
-                    # Single probe case
-                    if concept_to_probe:
-                        for concept, concept_probe in concept_to_probe.items():
-                            try:
-                                if concept_probe is probe:
-                                    probe_name = concept
+                    with torch.set_grad_enabled(True):
+                        # Temporarily enable parameter gradients
+                        for param in model.parameters():
+                            param.requires_grad = True
+                        
+                        # Clear memory before forward pass
+                        torch.cuda.empty_cache()
+                        
+                        # Collate batch data
+                        batch = collate_batch(batch_data)
+                        
+                        # Forward pass for batch
+                        # Check if we have token_ids or need to use text
+                        has_token_ids = any(tid is not None for tid in batch['token_ids'])
+                        
+                        if has_token_ids:
+                            # Prepare batched token IDs
+                            batch_token_ids = []
+                            batch_attn_masks = []
+                            max_len = max(len(tid) if tid is not None else 0 for tid in batch['token_ids'])
+                            
+                            for tid in batch['token_ids']:
+                                if tid is not None:
+                                    tid_tensor = torch.tensor(tid, device=model.device)
+                                    batch_token_ids.append(tid_tensor)
+                                    batch_attn_masks.append(torch.ones_like(tid_tensor))
+                                else:
+                                    # Shouldn't happen if has_token_ids is True
+                                    batch_token_ids.append(torch.zeros(max_len, device=model.device, dtype=torch.long))
+                                    batch_attn_masks.append(torch.zeros(max_len, device=model.device, dtype=torch.long))
+                            
+                            # Stack into batched tensors
+                            target_ids = torch.nn.utils.rnn.pad_sequence(batch_token_ids, batch_first=True)
+                            target_attn_mask = torch.nn.utils.rnn.pad_sequence(batch_attn_masks, batch_first=True)
+                            
+                            behavior_output = model.forward_from_string_and_ids(
+                                input_text=batch['prompts'],
+                                target_ids=target_ids,
+                                target_attn_mask=target_attn_mask,
+                                add_chat_template=True,
+                                use_tunable_params=False,
+                                layers_to_probe=target_layers
+                            )
+                        else:
+                            behavior_output = model.forward_from_string(
+                                input_text=batch['prompts'],
+                                target_text=batch['responses'],
+                                add_chat_template=True,
+                                use_tunable_params=False,
+                                layers_to_probe=target_layers
+                            )
+                        
+                        # Get target tokens for behavior loss
+                        if has_token_ids:
+                            behavior_target_input_ids = target_ids
+                        else:
+                            behavior_target_input_ids, _ = model.tokenize(
+                                text=batch['responses'],
+                                add_chat_template=False,
+                                add_special_tokens=False,
+                                max_length=behavior_output.target_logits.size(1),
+                                pad_to_max_length=True
+                            )
+                        
+                        # Assertions
+                        assert behavior_output.target_logits is not None, "target_logits is None"
+                        assert behavior_target_input_ids is not None, "target_input_ids is None"
+                        assert behavior_output.target_logits.size(0) == behavior_target_input_ids.size(0)
+                        assert behavior_output.target_logits.size(1) == behavior_target_input_ids.size(1)
+                        
+                        with torch.amp.autocast('cuda', dtype=torch.bfloat16):
+                            # Initialize batch losses
+                            batch_behavior_losses = []
+                            batch_obf_losses = []
+                            batch_total_losses = []
+                            
+                            # Process each item in the batch
+                            for i in range(len(batch_data)):
+                                probe = batch['probes'][i]
+                                label = batch['labels'][i]
+                                use_behavior_loss = batch['use_behavior'][i]
+                                
+                                # Extract representations for this sample
+                                sample_reps = behavior_output.target_reps[i:i+1]
+                                
+                                # Calculate behavior loss for this sample
+                                lambda_beh = behaviour_lambda if use_behavior_loss else 0.0
+                                lambda_obf = 1 - lambda_beh
+                                
+                                if lambda_beh > 0 and use_behavior_loss:
+                                    # Calculate behavior loss
+                                    sample_logits = behavior_output.target_logits[i:i+1]
+                                    sample_target_ids = behavior_target_input_ids[i:i+1]
+                                    sample_loss_mask = behavior_output.loss_mask[i:i+1]
+                                    
+                                    beh_losses = F.cross_entropy(
+                                        sample_logits.transpose(1, 2),
+                                        sample_target_ids,
+                                        reduction="none"
+                                    )
+                                    
+                                    # Apply loss mask
+                                    beh_losses *= sample_loss_mask.float()
+                                    
+                                    # Average over valid tokens
+                                    num_valid_tokens = sample_loss_mask.float().sum(dim=-1)
+                                    behavior_loss = beh_losses.sum(dim=-1) / (num_valid_tokens + 1e-8)
+                                else:
+                                    behavior_loss = torch.tensor(0.0, device=model.device)
+                                
+                                # Calculate obfuscation loss
+                                if isinstance(probe, tuple):
+                                    # Dual probe case
+                                    probe_x, probe_y = probe
+                                    label_x, label_y = label
+                                    
+                                    scores_x = probe_x.predict(reps=sample_reps)
+                                    scores_y = probe_y.predict(reps=sample_reps)
+                                    
+                                    ideal_scores_x = torch.tensor([label_x], device=model.device, dtype=torch.float16)
+                                    ideal_scores_y = torch.tensor([label_y], device=model.device, dtype=torch.float16)
+                                    
+                                    obf_loss_x = F.mse_loss(scores_x, ideal_scores_x, reduction="none")
+                                    obf_loss_y = F.mse_loss(scores_y, ideal_scores_y, reduction="none")
+                                    
+                                    obf_loss = (obf_loss_x + obf_loss_y) / 2
+                                else:
+                                    # Single probe case
+                                    scores = probe.predict(reps=sample_reps)
+                                    ideal_scores = torch.tensor([label], device=model.device, dtype=torch.float16)
+                                    obf_loss = F.mse_loss(scores, ideal_scores, reduction="none")
+                                
+                                # Combine losses for this sample
+                                total_loss = lambda_beh * behavior_loss + lambda_obf * obf_loss
+                                
+                                batch_behavior_losses.append(behavior_loss.mean())
+                                batch_obf_losses.append(obf_loss.mean())
+                                batch_total_losses.append(total_loss.mean())
+                            
+                            # Average losses across batch
+                            loss = torch.stack(batch_total_losses).mean()
+                            avg_beh_loss = torch.stack(batch_behavior_losses).mean().item()
+                            avg_obf_loss = torch.stack(batch_obf_losses).mean().item()
+                        
+                        # Backward pass
+                        loss.backward(retain_graph=False)
+                        optim.step()
+                        optim.zero_grad()
+                        
+                        # Prepare detailed sample information
+                        batch_sample_details = []
+                        for i, item in enumerate(batch_data):
+                            probe, prompt_text, response_text, token_ids, label, use_behavior = item
+                            
+                            # Extract additional sample information
+                            has_clue = "You are being probed for" in prompt_text
+                            clue_concept = None
+                            if has_clue:
+                                # Extract the concept being clued
+                                clue_match = re.search(r"You are being probed for '([^']+)'", prompt_text)
+                                if clue_match:
+                                    clue_concept = clue_match.group(1)
+                            
+                            # Check for triggers/antonyms in prompt
+                            uses_trigger = False
+                            uses_antonym = False
+                            trigger_word = None
+                            antonym_used = None
+                            
+                            # Common trigger patterns
+                            trigger_patterns = ["trigger:", "TRIGGER:", "cue:", "CUE:"]
+                            for pattern in trigger_patterns:
+                                if pattern in prompt_text:
+                                    uses_trigger = True
+                                    # Try to extract the trigger word
+                                    trigger_match = re.search(f"{pattern}\\s*(\\w+)", prompt_text)
+                                    if trigger_match:
+                                        trigger_word = trigger_match.group(1)
                                     break
-                            except:
-                                continue
-                
-                # Forward pass
-                if token_ids is not None:
-                    behavior_output = model.forward_from_string_and_ids(
-                        input_text=[prompt_text],
-                        target_ids=torch.tensor(token_ids, device=model.device).unsqueeze(0),
-                        target_attn_mask=torch.ones_like(torch.tensor(token_ids, device=model.device)).unsqueeze(0),
-                        add_chat_template=True,
-                        use_tunable_params=False,
-                        layers_to_probe=target_layers
-                    )
-                else:
-                    behavior_output = model.forward_from_string(
-                        input_text=[prompt_text],
-                        target_text=[response_text],
-                        add_chat_template=True,
-                        use_tunable_params=False,
-                        layers_to_probe=target_layers
-                    )
-
-                # Get target tokens
-                if token_ids is not None:
-                    behavior_target_input_ids = torch.tensor(token_ids, device=model.device).unsqueeze(0)
-                else:
-                    behavior_target_input_ids, _ = model.tokenize(
-                        text=[response_text],
-                        add_chat_template=False,
-                        add_special_tokens=False,
-                        max_length=behavior_output.target_logits.size(1),
-                        pad_to_max_length=True
-                    )
-
-                # Assertions
-                assert behavior_output.target_logits is not None, "target_logits is None"
-                assert behavior_target_input_ids is not None, "target_input_ids is None"
-                assert behavior_output.target_logits.size(0) == behavior_target_input_ids.size(0)
-                assert behavior_output.target_logits.size(1) == behavior_target_input_ids.size(1)
-                
-                # Determine detailed data type
-                detailed_data_type = "unknown"
-                if data_splits:
-                    for split_name, split_data in data_splits.items():
-                        if any(item[:3] == data_item[:3] for item in split_data):  # Compare first 3 elements
-                            detailed_data_type = split_name
-                            break
-                
-                # Get probe score for logging
-                with torch.no_grad():
-                    if isinstance(probe, tuple):
-                        probe_x, probe_y = probe
-                        score_x = probe_x.predict(reps=behavior_output.target_reps).item()
-                        score_y = probe_y.predict(reps=behavior_output.target_reps).item()
-                        actual_probe_score = (score_x, score_y)
+                            
+                            # Check for antonym usage (common patterns)
+                            antonym_patterns = ["opposite of", "antonym of", "contrary to", "not"]
+                            for pattern in antonym_patterns:
+                                if pattern in prompt_text.lower():
+                                    uses_antonym = True
+                                    # Try to extract the antonym
+                                    antonym_match = re.search(f"{pattern}\\s+(\\w+)", prompt_text.lower())
+                                    if antonym_match:
+                                        antonym_used = antonym_match.group(1)
+                                    break
+                            
+                            # Get data type for this sample
+                            sample_data_type = "unknown"
+                            if data_type_mapping:
+                                item_key = (id(probe), prompt_text[:50] if prompt_text else "", response_text[:50] if response_text else "")
+                                sample_data_type = data_type_mapping.get(item_key, "unknown")
+                            
+                            # Determine data source type
+                            data_source = "unknown"
+                            if "ultrachat" in sample_data_type:
+                                data_source = "ultrachat"
+                            elif "vanilla" in sample_data_type:
+                                data_source = "vanilla"
+                            elif "topical" in sample_data_type:
+                                data_source = "topical"
+                            
+                            # Get probe name(s)
+                            probe_name = "unknown"
+                            if isinstance(probe, tuple):
+                                # Dual probe case
+                                probe_x, probe_y = probe
+                                if concept_to_probe:
+                                    names = []
+                                    for p in [probe_x, probe_y]:
+                                        for concept, concept_probe in concept_to_probe.items():
+                                            if concept_probe is p:
+                                                names.append(concept)
+                                                break
+                                    probe_name = f"{names[0] if len(names) > 0 else 'unknown'}+{names[1] if len(names) > 1 else 'unknown'}"
+                            else:
+                                # Single probe case
+                                if concept_to_probe:
+                                    for concept, concept_probe in concept_to_probe.items():
+                                        if concept_probe is probe:
+                                            probe_name = concept
+                                            break
+                            
+                            sample_detail = {
+                                'sample_idx': i,
+                                'data_type': sample_data_type,
+                                'data_source': data_source,
+                                'probe_name': probe_name,
+                                'label': label,
+                                'use_behavior_loss': use_behavior,
+                                'has_clue': has_clue,
+                                'clue_concept': clue_concept,
+                                'uses_trigger': uses_trigger,
+                                'trigger_word': trigger_word,
+                                'uses_antonym': uses_antonym,
+                                'antonym_used': antonym_used,
+                                'prompt_length': len(prompt_text),
+                                'response_length': len(response_text),
+                                'prompt_full': prompt_text,
+                                'response_full': response_text,
+                                'prompt_preview': prompt_text[:100] + "..." if len(prompt_text) > 100 else prompt_text,
+                                'response_preview': response_text[:50] + "..." if len(response_text) > 50 else response_text,
+                            }
+                            batch_sample_details.append(sample_detail)
+                        
+                        # Log batch information with enhanced details
+                        step_log = {
+                            'step': step_num,
+                            'epoch': epoch,
+                            'batch_idx': batch_idx,
+                            'batch_size': len(batch_data),
+                            'behavior_loss': avg_beh_loss,
+                            'obf_loss': avg_obf_loss,
+                            'total_loss': loss.item(),
+                            'batch_samples': batch_sample_details,
+                        }
+                        
+                        behavior_losses.append(avg_beh_loss)
+                        obf_losses.append(avg_obf_loss)
+                        
+                        # Calculate rolling averages
+                        loss10_behavior.append(np.mean(behavior_losses[-10:]))
+                        loss10_obf.append(np.mean(obf_losses[-10:]))
+                        loss50_behavior.append(np.mean(behavior_losses[-50:]))
+                        loss50_obf.append(np.mean(obf_losses[-50:]))
+                        
+                        step_log['behavior_loss10'] = loss10_behavior[-1]
+                        step_log['obf_loss10'] = loss10_obf[-1]
+                        step_log['behavior_loss50'] = loss50_behavior[-1]
+                        step_log['obf_loss50'] = loss50_obf[-1]
+                        
+                        step_logs.append(step_log)
+                        
+                        # Log to wandb if available
+                        if wandb_run:
+                            wandb.log({
+                                'train/step': step_num,
+                                'train/epoch': epoch,
+                                'train/batch_size': len(batch_data),
+                                'train/behavior_loss': avg_beh_loss,
+                                'train/obf_loss': avg_obf_loss,
+                                'train/total_loss': loss.item(),
+                                'train/behavior_loss10': step_log['behavior_loss10'],
+                                'train/obf_loss10': step_log['obf_loss10'],
+                                'train/behavior_loss50': step_log['behavior_loss50'],
+                                'train/obf_loss50': step_log['obf_loss50'],
+                            }, step=step_num)
+                        
+                        # Get data types in this batch
+                        batch_data_types = []
+                        if data_type_mapping:
+                            for item in batch_data:
+                                item_key = (id(item[0]), item[1][:50] if item[1] else "", item[2][:50] if item[2] else "")
+                                data_type = data_type_mapping.get(item_key, "unknown")
+                                batch_data_types.append(data_type)
+                        
+                        # Count data types
+                        data_type_counts = {}
+                        for dt in batch_data_types:
+                            data_type_counts[dt] = data_type_counts.get(dt, 0) + 1
+                        
+                        # Format data type string
+                        if data_type_counts:
+                            data_type_str = ", ".join([f"{dt}: {count}" for dt, count in sorted(data_type_counts.items())])
+                        else:
+                            data_type_str = "no type info"
+                        
+                        logger.print(f"Step {step_num} - Batch {batch_idx} - size: {len(batch_data)} - "
+                                   f"beh_loss: {avg_beh_loss:.4f} - obf_loss: {avg_obf_loss:.4f} - "
+                                   f"total_loss: {loss.item():.4f} - types: [{data_type_str}]")
+                        
+                        step_num += 1
+                        pbar.update(1)
+                        pbar.set_postfix({
+                            'batch_size': len(batch_data),
+                            'beh_loss': f"{avg_beh_loss:.4f}",
+                            'obf_loss': f"{avg_obf_loss:.4f}"
+                        })
+                        
+                        # Perform validation at specified frequency
+                        if val_data and step_num > 0 and step_num % validation_frequency == 0:
+                            validation_result = evaluate_validation_set(
+                                model, val_data, target_layers, behaviour_lambda, step_num, logger,
+                                validation_metadata=validation_metadata, concept_to_probe=concept_to_probe
+                            )
+                            validation_logs.append(validation_result)
+                            
+                            # Log validation results to wandb
+                            if wandb_run:
+                                wandb.log({
+                                    'val/step': step_num,
+                                    'val/obf_loss': validation_result['avg_obf_loss'],
+                                    'val/behavior_loss': validation_result['avg_beh_loss'],
+                                    'val/num_samples': validation_result['num_samples']
+                                }, step=step_num)
+                        
+                        # Clean up
+                        del behavior_output, behavior_target_input_ids, loss
+                        
+                        # Disable gradients again
+                        for param in model.parameters():
+                            param.requires_grad = False
+                        
+                        # Mark batch as processed
+                        batch_processed = True
+                        
+                except torch.cuda.OutOfMemoryError as e:
+                    # Handle CUDA OOM
+                    logger.print(f"CUDA OOM with batch size {batch_attempt_size}. Halving batch size...")
+                    torch.cuda.empty_cache()
+                    gc.collect()
+                    
+                    # Halve the batch size
+                    batch_attempt_size = max(1, batch_attempt_size // 2)
+                    current_batch_size = batch_attempt_size
+                    
+                    # Reset optimizer state to avoid issues
+                    optim.zero_grad()
+                    
+                    # Disable gradients
+                    for param in model.parameters():
+                        param.requires_grad = False
+                    
+                    if batch_attempt_size < 1:
+                        logger.print("Cannot reduce batch size further. Skipping batch.")
+                        batch_processed = True  # Skip this batch
                     else:
-                        actual_probe_score = probe.predict(reps=behavior_output.target_reps).item()
-                
-                with torch.amp.autocast('cuda', dtype=torch.bfloat16):
-                    # Calculate losses
-                    lambda_beh = behaviour_lambda if use_behavior_loss else 0.0
-                    lambda_obf = 1 - lambda_beh
-                    
-                    if lambda_beh > 0 and use_behavior_loss:
-                        # Calculate behavior loss
-                        beh_losses = F.cross_entropy(
-                            behavior_output.target_logits.transpose(1, 2),
-                            behavior_target_input_ids,
-                            reduction="none"
-                        )
-                        
-                        # Apply loss mask
-                        beh_losses *= behavior_output.loss_mask.float()
-                        
-                        # Average over valid tokens
-                        num_valid_tokens = behavior_output.loss_mask.float().sum(dim=-1)
-                        behavior_loss = beh_losses.sum(dim=-1) / (num_valid_tokens + 1e-8)
-                    else:
-                        behavior_loss = torch.tensor(0.0, device=behavior_output.target_logits.device)
-                    
-                    # Get obfuscation loss (handle both single and dual probes)
-                    if isinstance(probe, tuple):
-                        # Dual probe case
-                        probe_x, probe_y = probe
-                        label_x, label_y = label
-                        
-                        scores_x = probe_x.predict(reps=behavior_output.target_reps)
-                        scores_y = probe_y.predict(reps=behavior_output.target_reps)
-                        
-                        ideal_scores_x = torch.tensor([label_x], device=model.device, dtype=torch.float16)
-                        ideal_scores_y = torch.tensor([label_y], device=model.device, dtype=torch.float16)
-                        
-                        obf_loss_x = F.mse_loss(scores_x, ideal_scores_x, reduction="none")
-                        obf_loss_y = F.mse_loss(scores_y, ideal_scores_y, reduction="none")
-                        
-                        # Average the two losses
-                        obf_loss = (obf_loss_x + obf_loss_y) / 2
-                    else:
-                        # Single probe case (existing logic)
-                        scores = probe.predict(reps=behavior_output.target_reps)
-                        ideal_scores = torch.tensor([label], device=model.device, dtype=torch.float16)
-                        obf_loss = F.mse_loss(scores, ideal_scores, reduction="none")
-                    
-                    # Combine losses
-                    total_loss = lambda_beh * behavior_loss + lambda_obf * obf_loss
-                    
-                    # Calculate layer norms
-                    layer_norms = torch.norm(behavior_output.target_reps, dim=-1).mean(dim=-1)
-                
-                loss = total_loss.mean().squeeze()
-                
-                # Log step information
-                step_log = {
-                    'step': step_num,
-                    'epoch': epoch,
-                    'data_type': detailed_data_type,
-                    'probe_name': probe_name,
-                    'actual_probe_score': actual_probe_score,
-                    'target_probe_score': label,
-                    'use_behavior_loss': use_behavior_loss,
-                    'behavior_loss': behavior_loss.mean().item() if hasattr(behavior_loss, 'mean') else behavior_loss.item(),
-                    'obf_loss': obf_loss.mean().item() if hasattr(obf_loss, 'mean') else obf_loss.item(),
-                    'total_loss': loss.item(),
-                    'layer_norm': layer_norms.mean().item() if hasattr(layer_norms, 'mean') else 0.0,
-                    'prompt_preview': prompt_text[:100] + "..." if len(prompt_text) > 100 else prompt_text,
-                    'response_preview': response_text[:50] + "..." if len(response_text) > 50 else response_text,
-                }
-                
-                behavior_losses.append(step_log['behavior_loss'])
-                obf_losses.append(step_log['obf_loss'])
-                
-                # Calculate rolling averages (loss10 and loss50)
-                loss10_behavior.append(np.mean(behavior_losses[-10:]))
-                loss10_obf.append(np.mean(obf_losses[-10:]))
-                loss50_behavior.append(np.mean(behavior_losses[-50:]))
-                loss50_obf.append(np.mean(obf_losses[-50:]))
-                
-                # Add rolling averages to step_log
-                step_log['behavior_loss10'] = loss10_behavior[-1]
-                step_log['obf_loss10'] = loss10_obf[-1]
-                step_log['behavior_loss50'] = loss50_behavior[-1]
-                step_log['obf_loss50'] = loss50_obf[-1]
-                
-                step_logs.append(step_log)
-                
-                # Log to wandb if available
-                if wandb_run:
-                    wandb.log({
-                        'train/step': step_num,
-                        'train/epoch': epoch,
-                        'train/behavior_loss': step_log['behavior_loss'],
-                        'train/obf_loss': step_log['obf_loss'],
-                        'train/total_loss': step_log['total_loss'],
-                        'train/behavior_loss10': step_log['behavior_loss10'],
-                        'train/obf_loss10': step_log['obf_loss10'],
-                        'train/behavior_loss50': step_log['behavior_loss50'],
-                        'train/obf_loss50': step_log['obf_loss50'],
-                        'train/layer_norm': step_log['layer_norm'],
-                        'train/actual_probe_score': actual_probe_score,
-                        'train/target_probe_score': label,
-                        'meta/data_type': detailed_data_type,
-                        'meta/probe_name': probe_name,
-                        'meta/use_behavior_loss': use_behavior_loss
-                    }, step=step_num)
-                
-                # logger.print(f"Step {step_num} - {detailed_data_type} - probe: {probe_name} - "
-                #            f"actual_score: {actual_probe_score:.4f} - target_score: {label} - "
-                #            f"beh_loss: {beh_loss_str} - obf_loss: {step_log['obf_loss']:.4f} - prompt (len: {len(prompt_text)}): {step_log['prompt_preview']} - response (len: {len(response_text)}): {step_log['response_preview']}")
-                logger.print(step_log)
-                
-                # Backward pass
-                loss.backward(retain_graph=False)
-                optim.step()
-                optim.zero_grad()
-                
-                beh_loss_str = f"{step_log['behavior_loss']:.4f}" if use_behavior_loss else "N/A"
-                step_num += 1
-                pbar.update(1)
-                pbar.set_postfix({
-                    'beh_loss': beh_loss_str,
-                    'obf_loss': f"{step_log['obf_loss']:.4f}",
-                    'probe': probe_name
-                })
-                
-                # Perform validation at specified frequency
-                if val_data and step_num > 0 and step_num % validation_frequency == 0:
-                    validation_result = evaluate_validation_set(
-                        model, val_data, target_layers, behaviour_lambda, step_num, logger,
-                        validation_metadata=validation_metadata, concept_to_probe=concept_to_probe
-                    )
-                    validation_logs.append(validation_result)
-                    
-                    # Log validation results to wandb
-                    if wandb_run:
-                        wandb.log({
-                            'val/step': step_num,
-                            'val/obf_loss': validation_result['avg_obf_loss'],
-                            'val/behavior_loss': validation_result['avg_beh_loss'],
-                            'val/num_samples': validation_result['num_samples']
-                        }, step=step_num)
-                
-                # Clean up
-                del behavior_output, behavior_target_input_ids, loss
-                
-                # Disable gradients again
-                for param in model.parameters():
-                    param.requires_grad = False
-                
-            # Force garbage collection
+                        logger.print(f"Retrying with batch size {batch_attempt_size}...")
+            
+            # Force garbage collection after each batch
             torch.cuda.empty_cache()
             gc.collect()
     
@@ -1025,14 +577,66 @@ def concept_training_loop(
     
     return model, behavior_losses, obf_losses, loss10_behavior, loss10_obf, loss50_behavior, loss50_obf, validation_logs
 
+
+def save_validation_set(val_data: List, data_splits: Dict, concept_to_probe: Dict, checkpoint_path: str, logger):
+    """Save validation set to JSON file.
+    
+    Returns:
+        validation_set_data: List of validation items with metadata
+    """
+    validation_set_data = []
+    for i, data_item in enumerate(val_data):
+        probe, prompt_text, response_text, token_ids, label, use_behavior_loss = data_item
+        
+        # Get probe name for JSON serialization
+        probe_name = "unknown"
+        if concept_to_probe:
+            for concept, concept_probe in concept_to_probe.items():
+                try:
+                    if concept_probe is probe:
+                        probe_name = concept
+                        break
+                except:
+                    continue
+        
+        # Determine detailed data type
+        detailed_data_type = "unknown"
+        if data_splits:
+            for split_name, split_data in data_splits.items():
+                if any(item[:3] == data_item[:3] for item in split_data):  # Compare first 3 elements
+                    detailed_data_type = split_name
+                    break
+        
+        validation_item = {
+            "index": i,
+            "probe_name": probe_name,
+            "prompt": prompt_text,
+            "response": response_text,
+            "token_ids": token_ids,
+            "label": label,
+            "use_behavior_loss": use_behavior_loss,
+            "data_type": detailed_data_type
+        }
+        validation_set_data.append(validation_item)
+    
+    # Save validation set
+    validation_file_path = os.path.join(checkpoint_path, "validation_set.json")
+    with open(validation_file_path, "w") as f:
+        json.dump(validation_set_data, f, indent=2)
+    logger.print(f"Saved validation set ({len(validation_set_data)} samples) to validation_set.json")
+    
+    return validation_set_data
+
+
 def train_concept_self_obfuscation_model(
     model_name: str, # e.g."gemma_2_9b_instruct"
     model_checkpoint: str, # e.g. "experiments/self_obfuscation_main/outputs/model_checkpoints/checkpoint_20250629_134811_synthetic_logistic_12",
     probe_checkpoints: str, # e.g. "20250701_002418_TRAIN_synthetic_logistic_12",
-    num_samples_per_concept: int, # e.g. 50
+    num_samples_per_epoch: int, # Total training samples per epoch (distributed across concepts)
     num_epochs: int, # e.g. 3
     learning_rate: float, # e.g. 2e-6
     behaviour_lambda: float, # e.g. 0.1
+    batch_size: int, # e.g. 8
     max_neg_rating: float, # Maximum rating threshold for negative samples
     min_pos_rating: float, # Minimum rating threshold for positive samples
     validation_split: float, # Percentage of training data to hold out for validation
@@ -1045,6 +649,7 @@ def train_concept_self_obfuscation_model(
     logger,
     save_model_checkpoint: bool,
     use_synonyms: bool,
+    use_antonyms: bool,
     clue_N_data_X_probe_X_topical: float,
     clue_X_data_Y_probe_Y_topical: float,
     clue_X_data_Y_probe_Y_ultrachat: float,
@@ -1074,6 +679,9 @@ def train_concept_self_obfuscation_model(
     enable_topical_behavior_loss: bool = False
 ):
     """Train a model to perform self-obfuscation against concept probes."""
+    # Set random seeds for reproducible results
+    set_seeds(42)
+    
     if logger is None:
         logger = CSVTXTLogger(print_logs_to_console=True)
     
@@ -1099,189 +707,74 @@ def train_concept_self_obfuscation_model(
         logger.print(f"Remaining concepts after exclusion: {list(concept_to_probe.keys())}")
     
     
-    logger.print("Loading synthetic concept data...")
-    # Load using the new data loading approach
-    topical_ratings = load_rated_data(
-        dataset_name=dataset_name,
-        response_type="topical",
-        manual_path_confirm=False,
-        exclude_refusals=True,
-        exclude_missing_ratings=True,
-        exclude_concepts=exclude_concepts,
-        filter_to_concepts=filter_to_concepts
-    )
-    # Try to load vanilla data, but handle gracefully if none available
-    try:
-        vanilla_ratings = load_rated_data(
-            dataset_name=dataset_name,
-            response_type="vanilla",
-            manual_path_confirm=False,
-            exclude_refusals=True,
-            exclude_missing_ratings=True,
-            exclude_concepts=exclude_concepts,
-            filter_to_concepts=filter_to_concepts
+    # Check if dataset_name contains "PRESET" - if so, load pre-processed training data directly
+    if "PRESET" in dataset_name:
+        train_data, val_data, data_type_mapping, data_splits = load_preset_data(
+            dataset_name, concept_to_probe, logger
         )
-    except ValueError as e:
-        if "No valid data found" in str(e):
-            print("No vanilla data found, continuing without vanilla samples...")
-            vanilla_ratings = []
-        else:
-            raise
-    if not skip_ultrachat_data:
-        # Try to load ultrachat data, but handle gracefully if none available
-        try:
-            ultrachat_ratings = load_rated_data(
-                dataset_name=ultrachat_dataset_name,
-                response_type="vanilla",
-                manual_path_confirm=False,
-                exclude_refusals=True,
-                exclude_missing_ratings=True,
-                exclude_concepts=exclude_concepts,
-                filter_to_concepts=filter_to_concepts
-            )
-        except ValueError as e:
-            if "No valid data found" in str(e):
-                print("No ultrachat data found, continuing without ultrachat samples...")
-                ultrachat_ratings = []
-            else:
-                raise
-    else:
-        print("skip_ultrachat_data==True, so continuing without Ultrachat data!")
-        ultrachat_ratings = []
-
-    
-    # Convert to the format expected by process_concept_training_data
-    concept_to_topical_data = PosNegDataByCategory.from_ratings(
-        topical_ratings, 
-        max_neg_rating=max_neg_rating, 
-        min_pos_rating=min_pos_rating
-    )
-    # Handle empty vanilla and ultrachat data
-    if vanilla_ratings:
-        concept_to_vanilla_data = PosNegDataByCategory.from_ratings(
-            vanilla_ratings, 
-            max_neg_rating=max_neg_rating, 
-            min_pos_rating=min_pos_rating
-        )
-    else:
-        concept_to_vanilla_data = PosNegDataByCategory(categories={})
-    
-    if ultrachat_ratings:
-        concept_to_ultrachat_data = PosNegDataByCategory.from_ratings(
-            ultrachat_ratings, 
-            max_neg_rating=max_neg_rating, 
-            min_pos_rating=min_pos_rating,
-            ignore_generation_categories=True  # Ultrachat wasn't generated with target adjectives
-        )
-    else:
-        concept_to_ultrachat_data = PosNegDataByCategory(categories={})
-
-    # Create dual-category data
-    logger.print("Creating dual-category data...")
-    dual_topical_data = PosNegDataByDualCategory.from_ratings(
-        topical_ratings,
-        max_neg_rating=max_neg_rating,
-        min_pos_rating=min_pos_rating
-    ) if topical_ratings else PosNegDataByDualCategory(categories={})
-    
-    dual_vanilla_data = PosNegDataByDualCategory.from_ratings(
-        vanilla_ratings,
-        max_neg_rating=max_neg_rating,
-        min_pos_rating=min_pos_rating
-    ) if vanilla_ratings else PosNegDataByDualCategory(categories={})
-    
-    dual_ultrachat_data = PosNegDataByDualCategory.from_ratings(
-        ultrachat_ratings,
-        max_neg_rating=max_neg_rating,
-        min_pos_rating=min_pos_rating,
-        ignore_generation_categories=True  # Ultrachat wasn't generated with target adjectives
-    ) if ultrachat_ratings else PosNegDataByDualCategory(categories={})
-    
-    topical_counts = {k: f"Pos {len(v.pos_dataset)} Neg {len(v.neg_dataset)}" for k, v in concept_to_topical_data.categories.items()}
-    vanilla_counts = {k: f"Pos {len(v.pos_dataset)} Neg {len(v.neg_dataset)}" for k, v in concept_to_vanilla_data.categories.items()}
-    ultrachat_counts = {k: f"Pos {len(v.pos_dataset)} Neg {len(v.neg_dataset)}" for k, v in concept_to_ultrachat_data.categories.items()}
-    logger.print(f"Raw counts per category for topical data: {topical_counts}")
-    logger.print(f"Raw counts per category for vanilla data: {vanilla_counts}")
-    logger.print(f"Raw counts per category for ultrachat data: {ultrachat_counts}")
-    
-    # Log dual-category counts
-    dual_topical_counts = len(dual_topical_data.categories)
-    dual_vanilla_counts = len(dual_vanilla_data.categories)
-    dual_ultrachat_counts = len(dual_ultrachat_data.categories)
-    logger.print(f"Dual-category pairs: topical={dual_topical_counts}, vanilla={dual_vanilla_counts}, ultrachat={dual_ultrachat_counts}")
-    
-    # Debug: Show which dual-category pairs exist for ultrachat
-    if dual_ultrachat_data.categories:
-        logger.print(f"DEBUG: Ultrachat dual-category pairs: {list(dual_ultrachat_data.categories.keys())[:10]}... (showing first 10)")
-        # Count how many samples are in each pair
-        for pair in list(dual_ultrachat_data.categories.keys())[:5]:
-            dual_data = dual_ultrachat_data.categories[pair]
-            pos_count = len(dual_data.pos_dataset) if dual_data.pos_dataset else 0
-            neg_count = len(dual_data.neg_dataset) if dual_data.neg_dataset else 0
-            logger.print(f"  {pair}: {pos_count} positive, {neg_count} negative samples")
         
-        # Check which concepts appear in dual-category pairs but don't have probes
-        all_concepts_in_dual = set()
-        for pair in dual_ultrachat_data.categories.keys():
-            all_concepts_in_dual.add(pair[0])
-            all_concepts_in_dual.add(pair[1])
-        concepts_without_probes = all_concepts_in_dual - set(concept_to_probe.keys())
-        if concepts_without_probes:
-            logger.print(f"DEBUG: Concepts in dual-category ultrachat without probes: {concepts_without_probes}")
+    else:
+        # Normal data loading flow
+        (topical_ratings, vanilla_ratings, ultrachat_ratings,
+         concept_to_topical_data, concept_to_vanilla_data, concept_to_ultrachat_data,
+         dual_topical_data, dual_vanilla_data, dual_ultrachat_data) = load_and_process_rated_data(
+            dataset_name=dataset_name,
+            ultrachat_dataset_name=ultrachat_dataset_name,
+            skip_ultrachat_data=skip_ultrachat_data,
+            exclude_concepts=exclude_concepts,
+            filter_to_concepts=filter_to_concepts,
+            max_neg_rating=max_neg_rating,
+            min_pos_rating=min_pos_rating,
+            logger=logger
+        )
 
-    min_samples = 10
-    logger.print(f"Culling categories with fewer than {min_samples} samples...")
-    # If any category has pos or neg dataset with fewer than 10 samples, remove it
-    concept_to_topical_data.categories = {k: v for k, v in concept_to_topical_data.categories.items() if len(v.pos_dataset) > 10 and len(v.neg_dataset) > 10}
-    concept_to_vanilla_data.categories = {k: v for k, v in concept_to_vanilla_data.categories.items() if len(v.pos_dataset) > 10 and len(v.neg_dataset) > 10}
-    concept_to_ultrachat_data.categories = {k: v for k, v in concept_to_ultrachat_data.categories.items() if len(v.pos_dataset) > 10 and len(v.neg_dataset) > 10}
-
-    # Generate training data with new N/X/Y notation
-    logger.print("Generating training data with N/X/Y notation...")
-    
-    # Create data split distribution from individual parameters
-    custom_data_split_distribution = {
-        'clue_N_data_X_probe_X_topical': clue_N_data_X_probe_X_topical,
-        'clue_X_data_Y_probe_Y_topical': clue_X_data_Y_probe_Y_topical,
-        'clue_X_data_Y_probe_Y_ultrachat': clue_X_data_Y_probe_Y_ultrachat,
-        'clue_N_data_X_probe_X_ultrachat': clue_N_data_X_probe_X_ultrachat,
-        'clue_X_data_X_probe_X_topical': clue_X_data_X_probe_X_topical,
-        'clue_X_data_X_probe_X_vanilla': clue_X_data_X_probe_X_vanilla,
-        'clue_X_data_X_probe_X_ultrachat': clue_X_data_X_probe_X_ultrachat,
-        'clue_X_data_X_probe_Y_vanilla': clue_X_data_X_probe_Y_vanilla,
-        'clue_N_data_Y_probe_X_topical': clue_N_data_Y_probe_X_topical,
-        'clue_N_data_Y_probe_X_vanilla': clue_N_data_Y_probe_X_vanilla,
-        'clue_N_data_Y_probe_X_ultrachat': clue_N_data_Y_probe_X_ultrachat,
-        'clue_X_data_Y_probe_X_topical': clue_X_data_Y_probe_X_topical,
-        'clue_X_data_Y_probe_X_vanilla': clue_X_data_Y_probe_X_vanilla,
-        'clue_X_data_Y_probe_X_ultrachat': clue_X_data_Y_probe_X_ultrachat,
-        # Dual-category splits
-        'clue_X_data_XY_probe_XY_topical': clue_X_data_XY_probe_XY_topical,
-        'clue_N_data_XY_probe_XY_topical': clue_N_data_XY_probe_XY_topical,
-        'clue_X_data_XY_probe_XY_vanilla': clue_X_data_XY_probe_XY_vanilla,
-        'clue_N_data_XY_probe_XY_vanilla': clue_N_data_XY_probe_XY_vanilla,
-        'clue_X_data_XY_probe_XY_ultrachat': clue_X_data_XY_probe_XY_ultrachat,
-        'clue_N_data_XY_probe_XY_ultrachat': clue_N_data_XY_probe_XY_ultrachat,
-        # Reversed data types
-        'clue_N_data_Y_probe_X_topical_rev': clue_N_data_Y_probe_X_topical_rev,
-        'clue_N_data_Y_probe_X_vanilla_rev': clue_N_data_Y_probe_X_vanilla_rev,
-        'clue_N_data_Y_probe_X_ultrachat_rev': clue_N_data_Y_probe_X_ultrachat_rev,
-    }
-    
-    data_splits = process_concept_training_data(
-        concept_to_topical_data=concept_to_topical_data,
-        concept_to_vanilla_data=concept_to_vanilla_data,
-        concept_to_ultrachat_data=concept_to_ultrachat_data,
-        concept_to_probe=concept_to_probe,
-        dual_topical_data=dual_topical_data,
-        dual_vanilla_data=dual_vanilla_data,
-        dual_ultrachat_data=dual_ultrachat_data,
-        num_samples_per_concept=num_samples_per_concept,
-        logger=logger,
-        use_synonyms=use_synonyms,
-        data_split_distribution=custom_data_split_distribution,
-        enable_topical_behavior_loss=enable_topical_behavior_loss
-    )
+        # Generate training data with new N/X/Y notation
+        logger.print("Generating training data with N/X/Y notation...")
+        
+        # Create data split distribution from individual parameters
+        custom_data_split_distribution = {
+            'clue_N_data_X_probe_X_topical': clue_N_data_X_probe_X_topical,
+            'clue_X_data_Y_probe_Y_topical': clue_X_data_Y_probe_Y_topical,
+            'clue_X_data_Y_probe_Y_ultrachat': clue_X_data_Y_probe_Y_ultrachat,
+            'clue_N_data_X_probe_X_ultrachat': clue_N_data_X_probe_X_ultrachat,
+            'clue_X_data_X_probe_X_topical': clue_X_data_X_probe_X_topical,
+            'clue_X_data_X_probe_X_vanilla': clue_X_data_X_probe_X_vanilla,
+            'clue_X_data_X_probe_X_ultrachat': clue_X_data_X_probe_X_ultrachat,
+            'clue_X_data_X_probe_Y_vanilla': clue_X_data_X_probe_Y_vanilla,
+            'clue_N_data_Y_probe_X_topical': clue_N_data_Y_probe_X_topical,
+            'clue_N_data_Y_probe_X_vanilla': clue_N_data_Y_probe_X_vanilla,
+            'clue_N_data_Y_probe_X_ultrachat': clue_N_data_Y_probe_X_ultrachat,
+            'clue_X_data_Y_probe_X_topical': clue_X_data_Y_probe_X_topical,
+            'clue_X_data_Y_probe_X_vanilla': clue_X_data_Y_probe_X_vanilla,
+            'clue_X_data_Y_probe_X_ultrachat': clue_X_data_Y_probe_X_ultrachat,
+            # Dual-category splits
+            'clue_X_data_XY_probe_XY_topical': clue_X_data_XY_probe_XY_topical,
+            'clue_N_data_XY_probe_XY_topical': clue_N_data_XY_probe_XY_topical,
+            'clue_X_data_XY_probe_XY_vanilla': clue_X_data_XY_probe_XY_vanilla,
+            'clue_N_data_XY_probe_XY_vanilla': clue_N_data_XY_probe_XY_vanilla,
+            'clue_X_data_XY_probe_XY_ultrachat': clue_X_data_XY_probe_XY_ultrachat,
+            'clue_N_data_XY_probe_XY_ultrachat': clue_N_data_XY_probe_XY_ultrachat,
+            # Reversed data types
+            'clue_N_data_Y_probe_X_topical_rev': clue_N_data_Y_probe_X_topical_rev,
+            'clue_N_data_Y_probe_X_vanilla_rev': clue_N_data_Y_probe_X_vanilla_rev,
+            'clue_N_data_Y_probe_X_ultrachat_rev': clue_N_data_Y_probe_X_ultrachat_rev,
+        }
+        
+        data_splits = process_concept_training_data(
+            concept_to_topical_data=concept_to_topical_data,
+            concept_to_vanilla_data=concept_to_vanilla_data,
+            concept_to_ultrachat_data=concept_to_ultrachat_data,
+            concept_to_probe=concept_to_probe,
+            dual_topical_data=dual_topical_data,
+            dual_vanilla_data=dual_vanilla_data,
+            dual_ultrachat_data=dual_ultrachat_data,
+            num_samples_per_epoch=num_samples_per_epoch,
+            logger=logger,
+            use_synonyms=use_synonyms,
+            use_antonyms=use_antonyms,
+            data_split_distribution=custom_data_split_distribution,
+            enable_topical_behavior_loss=enable_topical_behavior_loss
+        )
     
     # Get target layer from probe metadata
     metadata_path = os.path.join(probe_checkpoints, "metadata.json")
@@ -1298,7 +791,7 @@ def train_concept_self_obfuscation_model(
         "model_name": model_name,
         "model_checkpoint": model_checkpoint,
         "probe_checkpoints": probe_checkpoints,
-        "num_samples_per_concept": num_samples_per_concept,
+        "num_samples_per_epoch": num_samples_per_epoch,
         "num_epochs": num_epochs,
         "learning_rate": learning_rate,
         "behaviour_lambda": behaviour_lambda,
@@ -1314,6 +807,7 @@ def train_concept_self_obfuscation_model(
         "dataset_name": dataset_name,
         "ultrachat_dataset_name": ultrachat_dataset_name,
         "use_synonyms": use_synonyms,
+        "use_antonyms": use_antonyms,
         "output_dir_base": output_dir_base,
         "training_data_sizes": {k: len(v) for k, v in data_splits.items()},
         # Data split distributions
@@ -1356,21 +850,28 @@ def train_concept_self_obfuscation_model(
         additional_suffix=additional_suffix
     )
     
-    # Prepare data for training
-    all_data = []
-    for split_name, split_data in data_splits.items():
-        all_data.extend(split_data)
-    
-    # Split data into training and validation sets
-    if validation_split > 0:
-        val_size = int(len(all_data) * validation_split)
-        train_data, val_data = split_data_fun(all_data, val_size, seed=42)
-        logger.print(f"Data split into training ({len(train_data)}) and validation ({len(val_data)}) sets")
-        logger.print(f"  Validation split: {validation_split:.1%}")
-    else:
-        train_data = all_data
-        val_data = []
-        logger.print(f"No validation split - using all {len(train_data)} samples for training")
+    # For non-PRESET mode, prepare data for training
+    if "PRESET" not in dataset_name:
+        # Prepare data for training - now with data type tracking
+        all_data = []
+        data_type_mapping = {}  # Maps data item to its split name
+        for split_name, split_data in data_splits.items():
+            for item in split_data:
+                # Create a unique identifier for the item (using first 3 elements)
+                item_key = (id(item[0]), item[1][:50] if item[1] else "", item[2][:50] if item[2] else "")
+                data_type_mapping[item_key] = split_name
+                all_data.append(item)
+        
+        # Split data into training and validation sets
+        if validation_split > 0:
+            val_size = int(len(all_data) * validation_split)
+            train_data, val_data = split_data_fun(all_data, val_size, seed=42)
+            logger.print(f"Data split into training ({len(train_data)}) and validation ({len(val_data)}) sets")
+            logger.print(f"  Validation split: {validation_split:.1%}")
+        else:
+            train_data = all_data
+            val_data = []
+            logger.print(f"No validation split - using all {len(train_data)} samples for training")
     
     # Count labels in training and validation sets
     train_label_1 = sum(1 for item in train_data if item[4] == 1)
@@ -1380,46 +881,11 @@ def train_concept_self_obfuscation_model(
     
     # Save validation set to JSON if it exists
     if val_data:
-        validation_set_data = []
-        for i, data_item in enumerate(val_data):
-            probe, prompt_text, response_text, token_ids, label, use_behavior_loss = data_item
-            
-            # Get probe name for JSON serialization
-            probe_name = "unknown"
-            if concept_to_probe:
-                for concept, concept_probe in concept_to_probe.items():
-                    try:
-                        if concept_probe is probe:
-                            probe_name = concept
-                            break
-                    except:
-                        continue
-            
-            # Determine detailed data type
-            detailed_data_type = "unknown"
-            if data_splits:
-                for split_name, split_data in data_splits.items():
-                    if any(item[:3] == data_item[:3] for item in split_data):  # Compare first 3 elements
-                        detailed_data_type = split_name
-                        break
-            
-            validation_item = {
-                "index": i,
-                "probe_name": probe_name,
-                "prompt": prompt_text,
-                "response": response_text,
-                "token_ids": token_ids,
-                "label": label,
-                "use_behavior_loss": use_behavior_loss,
-                "data_type": detailed_data_type
-            }
-            validation_set_data.append(validation_item)
-        
-        # Save validation set
-        validation_file_path = os.path.join(checkpoint_path, "validation_set.json")
-        with open(validation_file_path, "w") as f:
-            json.dump(validation_set_data, f, indent=2)
-        logger.print(f"Saved validation set ({len(validation_set_data)} samples) to validation_set.json")
+        validation_set_data = save_validation_set(
+            val_data, data_splits, concept_to_probe, checkpoint_path, logger
+        )
+    else:
+        validation_set_data = None
 
     logger.print(f"Training data prepared:")
     logger.print(f"  Training - Label=1 (maximize probe): {train_label_1}")
@@ -1443,7 +909,7 @@ def train_concept_self_obfuscation_model(
                 "model_name": model_name,
                 "model_checkpoint": model_checkpoint,
                 "probe_checkpoints": probe_checkpoints,
-                "num_samples_per_concept": num_samples_per_concept,
+                "num_samples_per_epoch": num_samples_per_epoch,
                 "num_epochs": num_epochs,
                 "learning_rate": learning_rate,
                 "behaviour_lambda": behaviour_lambda,
@@ -1454,7 +920,8 @@ def train_concept_self_obfuscation_model(
                 "validation_frequency": validation_frequency,
                 "training_data_sizes": {k: len(v) for k, v in data_splits.items()},
                 "concepts": list(concept_to_probe.keys()) if concept_to_probe else [],
-                "use_synonyms": use_synonyms
+                "use_synonyms": use_synonyms,
+                "use_antonyms": use_antonyms
             },
             tags=["concept-training", "self-obfuscation"]
         )
@@ -1473,11 +940,13 @@ def train_concept_self_obfuscation_model(
         target_layers=target_layers,
         logger=logger,
         checkpoint_path=checkpoint_path,
+        batch_size=batch_size,
         validation_frequency=validation_frequency,
         concept_to_probe=concept_to_probe,
         data_splits=data_splits,
         wandb_run=wandb_run,
-        validation_metadata=validation_set_data if val_data else None
+        validation_metadata=validation_set_data if val_data else None,
+        data_type_mapping=data_type_mapping
     )
     
     # Save model checkpoint
@@ -1583,8 +1052,8 @@ if __name__ == "__main__":
     parser.add_argument('--probe_checkpoints', type=str,
                       default="experiments/self_obfuscation_v1_rated/outputs/probe_checkpoints/probes_jul30_75_1e-3",
                       help='Name of probe checkpoints directory')
-    parser.add_argument('--num_samples_per_concept', type=int, default=150,
-                      help='Number of samples per concept for training')
+    parser.add_argument('--num_samples_per_epoch', type=int, default=150,
+                      help='Total number of samples per epoch (distributed across all concepts)')
     parser.add_argument('--num_epochs', type=int, default=1,
                       help='Number of training epochs')
     parser.add_argument('--learning_rate', type=float, default=8e-6,
@@ -1601,6 +1070,8 @@ if __name__ == "__main__":
                       help='Percentage of training data to hold out for validation (default: 0.05)')
     parser.add_argument('--validation_frequency', type=int, default=1000,
                       help='Validate every N steps (default: 1000)')
+    parser.add_argument('--batch_size', type=int, default=2,
+                      help='Batch size for training (will be automatically halved on CUDA OOM, default: 16)')
     parser.add_argument('--dont_save_model', action='store_true',
                       help='Do not save model checkpoint')
     parser.add_argument('--filter_to_concepts', type=str, nargs='+', default=None,
@@ -1613,6 +1084,8 @@ if __name__ == "__main__":
                       help='Dataset name pattern for ultrachat data (default: ultrachat_mega_dataset_20250731_161745.*\.json$)')
     parser.add_argument('--no_synonyms', action='store_true',
                       help='Disable synonym variations for concept clues')
+    parser.add_argument('--use_antonyms', action='store_true',
+                      help='Enable antonym usage for clue_X_data_Y_probe_Y types (50% chance)')
     
     # Data split distribution arguments
     parser.add_argument('--clue_N_data_X_probe_X_topical', type=float, default=0.10,
@@ -1677,15 +1150,17 @@ if __name__ == "__main__":
     
     # Handle synonym logic
     use_synonyms = not args.no_synonyms
+    use_antonyms = args.use_antonyms
     
     train_concept_self_obfuscation_model(
         model_name=args.model_name,
         model_checkpoint=args.model_checkpoint,
         probe_checkpoints=args.probe_checkpoints,
-        num_samples_per_concept=args.num_samples_per_concept,
+        num_samples_per_epoch=args.num_samples_per_epoch,
         num_epochs=args.num_epochs,
         learning_rate=args.learning_rate,
         behaviour_lambda=args.behaviour_lambda,
+        batch_size=args.batch_size,
         max_neg_rating=args.max_neg_rating,
         min_pos_rating=args.min_pos_rating,
         validation_split=args.validation_split,
@@ -1698,6 +1173,7 @@ if __name__ == "__main__":
         ultrachat_dataset_name=args.ultrachat_dataset_name,
         logger=None,
         use_synonyms=use_synonyms,
+        use_antonyms=use_antonyms,
         clue_N_data_X_probe_X_topical=args.clue_N_data_X_probe_X_topical,
         clue_X_data_Y_probe_Y_topical=args.clue_X_data_Y_probe_Y_topical,
         clue_X_data_Y_probe_Y_ultrachat=args.clue_X_data_Y_probe_Y_ultrachat,
