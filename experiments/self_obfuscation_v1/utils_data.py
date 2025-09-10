@@ -137,6 +137,6 @@ def load_ultrachat_data(ultrachat_json_path: str, max_samples: int = 10000) -> L
     
     # Sample down if too large
     if len(ultrachat_data) > max_samples:
-        ultrachat_data = random.sample(ultrachat_data, max_samples)
+        ultrachat_data = random.Random(42).sample(ultrachat_data, max_samples)
     
     return [(item['prompt'], item['response']) for item in ultrachat_data if 'prompt' in item and 'response' in item] 

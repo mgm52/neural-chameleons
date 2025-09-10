@@ -6,8 +6,8 @@ This script tests each concept probe on:
 2. Test data with "You are being probed for <concept>" prepended
 
 INPUTS:
-- Trained concept probes from experiments/self_obfuscation_concepts/outputs/probe_checkpoints/
-- Test data from data/synthetic_data/outputs/
+- Trained concept probes from experiments/self_obfuscation_v1/outputs/probe_checkpoints/
+- Test data from data/self_obfuscation_v1_synthetic/outputs/
 
 OUTPUTS:
 - Test results CSV files
@@ -351,13 +351,13 @@ def main():
     parser.add_argument(
         "--probe_dir",
         type=str,
-        default="experiments/self_obfuscation_concepts/outputs/probe_checkpoints/20250701_002418_TRAIN_synthetic_logistic_12",
+        default="experiments/self_obfuscation_v1/outputs/probe_checkpoints/20250701_002418_TRAIN_synthetic_logistic_12",
         help="Path to probe checkpoint directory",
     )
     parser.add_argument(
         "--data_dir",
         type=str,
-        default="data/synthetic_data/outputs/20250629_134811",
+        default="data/self_obfuscation_v1_synthetic/outputs/20250629_134811",
         help="Path to test data directory",
     )
     parser.add_argument(
@@ -369,13 +369,13 @@ def main():
     parser.add_argument(
         "--model_checkpoint",
         type=str,
-        default="experiments/self_obfuscation_concepts/outputs/model_checkpoints/checkpoint_20250703_172812_concepts",
+        default="experiments/self_obfuscation_v1/outputs/model_checkpoints/checkpoint_20250703_172812_concepts",
         help="Path to model checkpoint directory",
     )
     parser.add_argument(
         "--output_dir",
         type=str,
-        default="experiments/self_obfuscation_concepts/outputs/clued_test_results",
+        default="experiments/self_obfuscation_v1/outputs/clued_test_results",
         help="Output directory for results",
     )
     

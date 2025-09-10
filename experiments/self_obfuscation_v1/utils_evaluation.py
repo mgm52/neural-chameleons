@@ -133,45 +133,102 @@ def bootstrap_tpr_at_fpr_with_thresholds(
         "threshold_ci_95": (threshold_ci_lower, threshold_ci_upper)
     } 
 
-def plot_training_curves(behavior_losses: List[float], obf_losses: List[float], loss10_behavior: List[float], loss10_obf: List[float], loss50_behavior: List[float], loss50_obf: List[float], save_path: str):
-    """Generate and save training loss plots."""
-    plt.figure(figsize=(12, 8))
-    
-    # Create subplot for both losses
-    plt.subplot(2, 1, 1)
-    plt.plot(behavior_losses, label='Behavior Loss', color='blue', alpha=0.7)
-    plt.title('Behavior Loss Over Training Steps')
-    plt.xlabel('Training Step')
-    plt.ylabel('Behavior Loss')
-    plt.legend()
-    plt.grid(True, alpha=0.3)
-    
-    plt.subplot(2, 1, 2)
-    plt.plot(obf_losses, label='Obfuscation Loss', color='red', alpha=0.7)
-    plt.title('Obfuscation Loss Over Training Steps')
-    plt.xlabel('Training Step')
-    plt.ylabel('Obfuscation Loss')
-    plt.legend()
-    plt.grid(True, alpha=0.3)
+def plot_training_curves(behavior_losses: List[float], obf_losses: List[float], loss10_behavior: List[float], loss10_obf: List[float], loss50_behavior: List[float], loss50_obf: List[float], save_path: str, validation_logs: Optional[List[Dict]] = None):
+    """Generate and save training loss plots with optional validation curves."""
+    if validation_logs:
+        # Create 2x2 subplot layout when validation data is available
+        fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(16, 10))
+        
+        # Training behavior loss
+        ax1.plot(behavior_losses, label='Training Behavior Loss', color='blue', alpha=0.7)
+        ax1.set_title('Training Behavior Loss')
+        ax1.set_xlabel('Training Step')
+        ax1.set_ylabel('Behavior Loss')
+        ax1.legend()
+        ax1.grid(True, alpha=0.3)
+        
+        # Training obfuscation loss
+        ax2.plot(obf_losses, label='Training Obfuscation Loss', color='red', alpha=0.7)
+        ax2.set_title('Training Obfuscation Loss')
+        ax2.set_xlabel('Training Step')
+        ax2.set_ylabel('Obfuscation Loss')
+        ax2.legend()
+        ax2.grid(True, alpha=0.3)
+        
+        # Validation behavior loss
+        val_steps = [log['step'] for log in validation_logs]
+        val_beh_losses = [log['avg_beh_loss'] for log in validation_logs]
+        ax3.plot(val_steps, val_beh_losses, 'o-', label='Validation Behavior Loss', color='lightblue', markersize=4)
+        ax3.set_title('Validation Behavior Loss')
+        ax3.set_xlabel('Training Step')
+        ax3.set_ylabel('Behavior Loss')
+        ax3.legend()
+        ax3.grid(True, alpha=0.3)
+        
+        # Validation obfuscation loss
+        val_obf_losses = [log['avg_obf_loss'] for log in validation_logs]
+        ax4.plot(val_steps, val_obf_losses, 'o-', label='Validation Obfuscation Loss', color='orange', markersize=4)
+        ax4.set_title('Validation Obfuscation Loss')
+        ax4.set_xlabel('Training Step')
+        ax4.set_ylabel('Obfuscation Loss')
+        ax4.legend()
+        ax4.grid(True, alpha=0.3)
+    else:
+        # Original 2x1 layout when no validation data
+        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 8))
+        
+        # Training behavior loss
+        ax1.plot(behavior_losses, label='Behavior Loss', color='blue', alpha=0.7)
+        ax1.set_title('Behavior Loss Over Training Steps')
+        ax1.set_xlabel('Training Step')
+        ax1.set_ylabel('Behavior Loss')
+        ax1.legend()
+        ax1.grid(True, alpha=0.3)
+        
+        # Training obfuscation loss
+        ax2.plot(obf_losses, label='Obfuscation Loss', color='red', alpha=0.7)
+        ax2.set_title('Obfuscation Loss Over Training Steps')
+        ax2.set_xlabel('Training Step')
+        ax2.set_ylabel('Obfuscation Loss')
+        ax2.legend()
+        ax2.grid(True, alpha=0.3)
     
     plt.tight_layout()
     plt.savefig(save_path, dpi=300, bbox_inches='tight')
     plt.close()
     
     # Create combined plot
-    plt.figure(figsize=(12, 6))
+    fig, ax = plt.subplots(figsize=(12, 6))
     
     # Normalize losses for better visualization
     norm_behavior = np.array(behavior_losses) / max(behavior_losses) if behavior_losses else []
     norm_obf = np.array(obf_losses) / max(obf_losses) if obf_losses else []
     
-    plt.plot(norm_behavior, label='Behavior Loss (normalized)', color='blue', alpha=0.7)
-    plt.plot(norm_obf, label='Obfuscation Loss (normalized)', color='red', alpha=0.7)
-    plt.title('Training Loss Curves (Normalized)')
-    plt.xlabel('Training Step')
-    plt.ylabel('Normalized Loss')
-    plt.legend()
-    plt.grid(True, alpha=0.3)
+    ax.plot(norm_behavior, label='Train Behavior Loss (normalized)', color='blue', alpha=0.7)
+    ax.plot(norm_obf, label='Train Obfuscation Loss (normalized)', color='red', alpha=0.7)
+    
+    # Add validation data if available
+    if validation_logs:
+        val_steps = [log['step'] for log in validation_logs]
+        val_beh_losses = [log['avg_beh_loss'] for log in validation_logs]
+        val_obf_losses = [log['avg_obf_loss'] for log in validation_logs]
+        
+        # Normalize validation losses
+        if val_beh_losses and max(val_beh_losses) > 0:
+            norm_val_beh = np.array(val_beh_losses) / max(val_beh_losses)
+            ax.plot(val_steps, norm_val_beh, 'o-', label='Val Behavior Loss (normalized)', 
+                   color='lightblue', markersize=4)
+        
+        if val_obf_losses and max(val_obf_losses) > 0:
+            norm_val_obf = np.array(val_obf_losses) / max(val_obf_losses)
+            ax.plot(val_steps, norm_val_obf, 'o-', label='Val Obfuscation Loss (normalized)', 
+                   color='orange', markersize=4)
+    
+    ax.set_title('Training Loss Curves (Normalized)')
+    ax.set_xlabel('Training Step')
+    ax.set_ylabel('Normalized Loss')
+    ax.legend()
+    ax.grid(True, alpha=0.3)
     
     combined_path = save_path.replace('.png', '_combined.png')
     plt.savefig(combined_path, dpi=300, bbox_inches='tight')
@@ -265,6 +322,7 @@ def plot_training_curves(behavior_losses: List[float], obf_losses: List[float], 
     plt.savefig(combined_loss50_path, dpi=300, bbox_inches='tight')
     plt.close()
     
-    print(f"Training plots saved to {save_path} and {combined_path}")
+    val_msg = " (with validation)" if validation_logs else ""
+    print(f"Training plots{val_msg} saved to {save_path} and {combined_path}")
     print(f"Loss10 plots saved to {loss10_path} and {combined_loss10_path}")
     print(f"Loss50 plots saved to {loss50_path} and {combined_loss50_path}")

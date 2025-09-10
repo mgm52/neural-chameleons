@@ -257,7 +257,7 @@ if __name__ == "__main__":
     )
     # --- Core arguments ---
     parser.add_argument("--probe_dir", type=str, required=True, help="Directory containing the pre-trained probe .pkl files and metadata.json.")
-    parser.add_argument("--output_dir_base", type=str, default="experiments/self_obfuscation_concepts/outputs/probe_test_results", help="Base directory to save test results.")
+    parser.add_argument("--output_dir_base", type=str, default="experiments/self_obfuscation_v1/outputs/probe_test_results", help="Base directory to save test results.")
     parser.add_argument("--custom_folder_name", type=str, default="", help="Custom folder name for the output directory.")
     
     # --- Testing & Evaluation arguments ---
@@ -277,7 +277,7 @@ if __name__ == "__main__":
 
     # --- Example Command ---
     # python stage2_synthetic_probe_test.py \
-    #   --probe_dir experiments/self_obfuscation_concepts/outputs/probe_checkpoints/20250627_051510_synthetic_logistic_12 \
+    #   --probe_dir experiments/self_obfuscation_v1/outputs/probe_checkpoints/20250627_051510_synthetic_logistic_12 \
     #   --num_ultrachat_test_samples 2000
 
     test_and_save_synthetic_probes(

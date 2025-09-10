@@ -45,6 +45,7 @@ import torch
 import argparse
 import os
 import pickle
+import re
 from typing import List, Dict, Tuple, Optional
 import glob
 from pathlib import Path
@@ -80,11 +81,15 @@ def process_concept_training_data(
     concept_to_vanilla_data: Dict[str, List[Tuple[str, str]]],
     concept_to_probe: Dict[str, object],
     ultrachat_data: List[Tuple[str, str]],
-    num_samples_per_concept: int = 50,
+    num_samples_per_epoch: int = 50,
     logger = None
 ) -> Dict[str, List]:
     """
     Process training data for concept self-obfuscation using N/X/Y notation.
+    
+    Args:
+        num_samples_per_epoch: Total number of samples to generate per epoch,
+                               distributed across all concepts and data types
     
     Returns dict with keys organized by data source type:
     - clue_N_data_X_probe_X_topical: No clue, X topical data, X probe → target score 1
@@ -136,7 +141,7 @@ def process_concept_training_data(
         logger.print(f"Total: {sum(data_split_distribution.values()):.6f}")
     
     # Calculate target sample sizes based on distribution
-    total_samples = num_samples_per_concept * len(concept_to_probe)
+    total_samples = num_samples_per_epoch
     target_samples = {
         split_name: int(total_samples * prob) 
         for split_name, prob in data_split_distribution.items()
@@ -258,7 +263,7 @@ def process_concept_training_data(
         
         if len(available_samples) > 0:
             # Shuffle samples for random selection
-            random.shuffle(available_samples)
+            random.Random(42).shuffle(available_samples)
             
             if len(available_samples) >= target_count:
                 # We have enough samples, just take the target count
@@ -275,7 +280,7 @@ def process_concept_training_data(
                 # Add copies until we reach target_count
                 while len(final_samples) < target_count:
                     # Shuffle the original samples again for variety
-                    random.shuffle(available_samples)
+                    random.Random(42).shuffle(available_samples)
                     
                     # Add as many samples as needed (up to the remaining count)
                     remaining_needed = target_count - len(final_samples)
@@ -290,7 +295,7 @@ def process_concept_training_data(
     
     # Shuffle all data splits after sampling
     for key in data_splits:
-        random.shuffle(data_splits[key])
+        random.Random(42).shuffle(data_splits[key])
     
     # Show final distribution results
     if logger:
@@ -376,7 +381,7 @@ def concept_training_loop(
         
         # Combine and shuffle data
         epoch_data = [(item, "label_1") for item in label_1_data] + [(item, "label_0") for item in label_0_data]
-        random.shuffle(epoch_data)
+        random.Random(42).shuffle(epoch_data)
         
         for data_item, label_type in epoch_data:
             with torch.set_grad_enabled(True):
@@ -445,6 +450,52 @@ def concept_training_loop(
                             detailed_data_type = split_name
                             break
                 
+                # Extract additional sample information
+                has_clue = "You are being probed for" in prompt_text
+                clue_concept = None
+                if has_clue:
+                    # Extract the concept being clued
+                    clue_match = re.search(r"You are being probed for '([^']+)'", prompt_text)
+                    if clue_match:
+                        clue_concept = clue_match.group(1)
+                
+                # Check for triggers/antonyms in prompt
+                uses_trigger = False
+                uses_antonym = False
+                trigger_word = None
+                antonym_used = None
+                
+                # Common trigger patterns
+                trigger_patterns = ["trigger:", "TRIGGER:", "cue:", "CUE:"]
+                for pattern in trigger_patterns:
+                    if pattern in prompt_text:
+                        uses_trigger = True
+                        # Try to extract the trigger word
+                        trigger_match = re.search(f"{pattern}\\s*(\\w+)", prompt_text)
+                        if trigger_match:
+                            trigger_word = trigger_match.group(1)
+                        break
+                
+                # Check for antonym usage (common patterns)
+                antonym_patterns = ["opposite of", "antonym of", "contrary to", "not"]
+                for pattern in antonym_patterns:
+                    if pattern in prompt_text.lower():
+                        uses_antonym = True
+                        # Try to extract the antonym
+                        antonym_match = re.search(f"{pattern}\\s+(\\w+)", prompt_text.lower())
+                        if antonym_match:
+                            antonym_used = antonym_match.group(1)
+                        break
+                
+                # Determine data source type
+                data_source = "unknown"
+                if "ultrachat" in detailed_data_type:
+                    data_source = "ultrachat"
+                elif "vanilla" in detailed_data_type:
+                    data_source = "vanilla"
+                elif "topical" in detailed_data_type:
+                    data_source = "topical"
+                
                 # Get probe score for logging
                 with torch.no_grad():
                     actual_probe_score = probe.predict(reps=behavior_output.target_reps).item()
@@ -484,19 +535,30 @@ def concept_training_loop(
                 
                 loss = total_loss.mean().squeeze()
                 
-                # Log step information
+                # Log step information with enhanced details
                 step_log = {
                     'step': step_num,
                     'epoch': epoch,
                     'data_type': detailed_data_type,
+                    'data_source': data_source,
                     'probe_name': probe_name,
                     'actual_probe_score': actual_probe_score,
                     'target_probe_score': label,
                     'use_behavior_loss': use_behavior_loss,
+                    'has_clue': has_clue,
+                    'clue_concept': clue_concept,
+                    'uses_trigger': uses_trigger,
+                    'trigger_word': trigger_word,
+                    'uses_antonym': uses_antonym,
+                    'antonym_used': antonym_used,
                     'behavior_loss': behavior_loss.mean().item() if hasattr(behavior_loss, 'mean') else behavior_loss.item(),
                     'obf_loss': obf_loss.mean().item() if hasattr(obf_loss, 'mean') else obf_loss.item(),
                     'total_loss': loss.item(),
                     'layer_norm': layer_norms.mean().item() if hasattr(layer_norms, 'mean') else 0.0,
+                    'prompt_length': len(prompt_text),
+                    'response_length': len(response_text),
+                    'prompt_full': prompt_text,
+                    'response_full': response_text,
                     'prompt_preview': prompt_text[:100] + "..." if len(prompt_text) > 100 else prompt_text,
                     'response_preview': response_text[:50] + "..." if len(response_text) > 50 else response_text,
                 }
@@ -560,10 +622,10 @@ def train_concept_self_obfuscation_model(
     model_name: str, # e.g."gemma_2_9b_instruct"
     model_checkpoint: str, # e.g. "experiments/self_obfuscation_main/outputs/model_checkpoints/checkpoint_20250629_134811_synthetic_logistic_12",
     probe_checkpoints: str, # e.g. "20250701_002418_TRAIN_synthetic_logistic_12",
-    synthetic_data_dir: str, # e.g. "data/synthetic_data/outputs/20250629_134811",
+    synthetic_data_dir: str, # e.g. "data/self_obfuscation_v1_synthetic/outputs/20250629_134811",
     ultrachat_json: str, # e.g. "data/self_obfuscation/outputs/ultrachat_model_training_data_20250215_023915.json",
     target_concepts: List[str], # e.g. ["excited", "german", "jokey", "all-caps", "mathematical", "chemistry-based", "biology-focused", "rhyming"]
-    num_samples_per_concept: int, # e.g. 50
+    num_samples_per_epoch: int, # Total training samples per epoch (distributed across concepts)
     num_epochs: int, # e.g. 3
     learning_rate: float, # e.g. 2e-6
     behaviour_lambda: float, # e.g. 0.1
@@ -581,7 +643,7 @@ def train_concept_self_obfuscation_model(
                           "chemistry-based", "biology-focused", "rhyming"]
     
     # Construct full paths
-    probe_checkpoints_path = f"experiments/self_obfuscation_concepts/outputs/probe_checkpoints/{probe_checkpoints}"
+    probe_checkpoints_path = f"experiments/self_obfuscation_v1/outputs/probe_checkpoints/{probe_checkpoints}"
     
     logger.print(f"Loading model: {model_checkpoint or model_name}")
     model = load_local_model(checkpoint_path=model_checkpoint, model_name=model_name)
@@ -630,7 +692,7 @@ def train_concept_self_obfuscation_model(
         concept_to_vanilla_data=concept_to_vanilla_data,
         concept_to_probe=concept_to_probe,
         ultrachat_data=ultrachat_data,
-        num_samples_per_concept=num_samples_per_concept,
+        num_samples_per_epoch=num_samples_per_epoch,
         logger=logger
     )
     
@@ -650,7 +712,7 @@ def train_concept_self_obfuscation_model(
         "model_checkpoint": model_checkpoint,
         "probe_checkpoints": probe_checkpoints,
         "target_concepts": available_concepts,
-        "num_samples_per_concept": num_samples_per_concept,
+        "num_samples_per_epoch": num_samples_per_epoch,
         "num_epochs": num_epochs,
         "learning_rate": learning_rate,
         "behaviour_lambda": behaviour_lambda,
@@ -659,7 +721,7 @@ def train_concept_self_obfuscation_model(
     }
     
     # Set up experiment directory
-    output_dir_base = "experiments/self_obfuscation_concepts/outputs/model_checkpoints"
+    output_dir_base = "experiments/self_obfuscation_v1/outputs/model_checkpoints"
     additional_suffix = "concepts"
     
     checkpoint_path = setup_experiment_directory(
@@ -753,7 +815,7 @@ if __name__ == "__main__":
                       default="20250701_002418_TRAIN_synthetic_logistic_12",
                       help='Name of probe checkpoints directory')
     parser.add_argument('--synthetic_data_dir', type=str,
-                      default="data/synthetic_data/outputs/20250629_134811",
+                      default="data/self_obfuscation_v1_synthetic/outputs/20250629_134811",
                       help='Directory containing synthetic concept data')
     parser.add_argument('--ultrachat_json', type=str,
                       default="data/self_obfuscation/outputs/ultrachat_model_training_data_20250215_023915.json",
@@ -762,8 +824,8 @@ if __name__ == "__main__":
                       default=["excited", "german", "jokey", "all-caps", "mathematical", 
                               "chemistry-based", "biology-focused", "rhyming"],
                       help='List of target concepts to train against')
-    parser.add_argument('--num_samples_per_concept', type=int, default=50,
-                      help='Number of samples per concept for training')
+    parser.add_argument('--num_samples_per_epoch', type=int, default=50,
+                      help='Total number of samples per epoch (distributed across all concepts)')
     parser.add_argument('--num_epochs', type=int, default=3,
                       help='Number of training epochs')
     parser.add_argument('--learning_rate', type=float, default=2e-6,
@@ -784,7 +846,7 @@ if __name__ == "__main__":
         synthetic_data_dir=args.synthetic_data_dir,
         ultrachat_json=args.ultrachat_json,
         target_concepts=args.target_concepts,
-        num_samples_per_concept=args.num_samples_per_concept,
+        num_samples_per_epoch=args.num_samples_per_epoch,
         num_epochs=args.num_epochs,
         learning_rate=args.learning_rate,
         behaviour_lambda=args.behaviour_lambda,

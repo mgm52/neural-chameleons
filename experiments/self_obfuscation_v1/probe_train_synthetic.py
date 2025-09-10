@@ -48,7 +48,7 @@ from data.data import PosNegDataByCategory
 def train_probe_with_plotting(model: HFHardPrompted, pos_samples: List[Tuple[str, str, List[int]]], neg_samples: List[Tuple[str, str, List[int]]], logger, target_layers: List[int], probe_type: str = "mlp", learning_rate: float = 5e-4, batch_size: int = 64, num_epochs: int = 5, adjective: str = "unknown"):
     """Train probe using the existing probe training infrastructure."""
     from experiments.self_obfuscation_v0.utils_training import ResponseProbeDataModule
-    from obf_reps.metrics import MetricConfig, MLPMetric, LogisticRegressionMetric
+    from obf_reps.metrics import AttentionMetric, MetricConfig, MLPMetric, LogisticRegressionMetric
     
     print_memory_usage(f"start of probe training for {adjective}", logger)
     
@@ -87,6 +87,13 @@ def train_probe_with_plotting(model: HFHardPrompted, pos_samples: List[Tuple[str
         )
     elif probe_type == "logistic":
         metric = LogisticRegressionMetric(
+            model=model,
+            data_module=data_module,
+            config=config,
+            logger=logger
+        )
+    elif probe_type == "attention":
+        metric = AttentionMetric(
             model=model,
             data_module=data_module,
             config=config,
@@ -196,7 +203,7 @@ def train_synthetic_probes(
             continue
         
         # c. Balance training data
-        neg_train = random.sample(neg_train_pool, min(len(pos_train), len(neg_train_pool)))
+        neg_train = random.Random(42).sample(neg_train_pool, min(len(pos_train), len(neg_train_pool)))
         logger.print(f"Training with {len(pos_train)} pos / {len(neg_train)} neg samples.")
 
         # d. Train the probe (training happens automatically during metric instantiation)
@@ -255,8 +262,8 @@ if __name__ == "__main__":
         formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
     # --- Core arguments ---
-    parser.add_argument("--synthetic_data_dir", type=str, default="data/synthetic_data/outputs/20250629_134811", help="Directory containing the synthetic data JSON files.")
-    parser.add_argument("--output_dir_base", type=str, default="experiments/self_obfuscation_concepts/outputs/probe_checkpoints", help="Base directory to save outputs.")
+    parser.add_argument("--synthetic_data_dir", type=str, default="data/self_obfuscation_v1_synthetic/outputs/20250629_134811", help="Directory containing the synthetic data JSON files.")
+    parser.add_argument("--output_dir_base", type=str, default="experiments/self_obfuscation_v1/outputs/probe_checkpoints", help="Base directory to save outputs.")
     parser.add_argument("--custom_folder_name", type=str, default="", help="Custom folder name for the output. If not provided, a name is generated.")
     
     # --- Model arguments ---
@@ -265,7 +272,7 @@ if __name__ == "__main__":
 
     # --- Probe training arguments ---
     parser.add_argument("--target_layers", type=str, default="12", help="Comma-separated layer numbers for the probe.")
-    parser.add_argument("--probe_type", type=str, default="logistic", choices=["logistic", "mlp"], help="Type of probe.")
+    parser.add_argument("--probe_type", type=str, default="logistic", choices=["logistic", "mlp", "attention"], help="Type of probe.")
     parser.add_argument("--lr", type=float, default=4e-5, help="Learning rate for probe training.")
     parser.add_argument("--batch_size", type=int, default=16, help="Batch size for probe training.")
     parser.add_argument("--epochs", type=int, default=1, help="Number of epochs for probe training.")
