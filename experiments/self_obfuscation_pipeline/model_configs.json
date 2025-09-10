@@ -1,0 +1,44 @@
+[
+    {
+        "name": "8e-6_lr_rerandom_21_original_1bs",
+        "description": "Configuration based on aug20_8e-6_lr_random_21_4e-5probe_no_gibberish checkpoint",
+        "train_args": [
+            "--validation_frequency", "750",
+            "--num_epochs", "1",
+            "--learning_rate", "8e-6",
+            "--behaviour_lambda", "0.1",
+            "--batch_size", "1",
+            
+            "--clue_N_data_X_probe_X_topical", "0.914",
+            "--clue_N_data_X_probe_X_ultrachat", "0.436",
+            
+            "--clue_X_data_Y_probe_Y_topical", "0.457",
+            "--clue_X_data_Y_probe_Y_ultrachat", "0.87",
+            
+            "--clue_X_data_X_probe_X_topical", "0.627",
+            "--clue_X_data_X_probe_X_ultrachat", "0.183",
+            
+            "--clue_N_data_Y_probe_X_topical", "0.68",
+            "--clue_N_data_Y_probe_X_ultrachat", "0.911",
+            "--clue_N_data_Y_probe_X_topical_rev", "0",
+            "--clue_N_data_Y_probe_X_ultrachat_rev", "0",
+            
+            "--clue_X_data_Y_probe_X_topical", "0.849",
+            "--clue_X_data_Y_probe_X_ultrachat", "0.555",
+            
+            "--clue_X_data_XY_probe_XY_topical", "0",
+            "--clue_X_data_XY_probe_XY_ultrachat", "0",
+            
+            "--clue_N_data_XY_probe_XY_topical", "0",
+            "--clue_N_data_XY_probe_XY_ultrachat", "0",
+            
+            "--clue_X_data_X_probe_X_vanilla", "0",
+            "--clue_X_data_X_probe_Y_vanilla", "0",
+            "--clue_N_data_Y_probe_X_vanilla", "0",
+            "--clue_N_data_Y_probe_X_vanilla_rev", "0",
+            "--clue_X_data_Y_probe_X_vanilla", "0",
+            "--clue_X_data_XY_probe_XY_vanilla", "0",
+            "--clue_N_data_XY_probe_XY_vanilla", "0"
+        ]
+    }
+]

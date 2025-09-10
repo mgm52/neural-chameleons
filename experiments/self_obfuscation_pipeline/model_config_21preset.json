@@ -1,0 +1,35 @@
+[
+    {
+        "name": "8e-6_lr_rererandom_21_original_1bs",
+        "description": "Configuration from aug20_8e-6_lr_random_21_4e-5probe_no_gibberish checkpoint",
+        "train_args": [
+            "--validation_frequency", "1500",
+            "--num_epochs", "1",
+            "--learning_rate", "8e-6",
+            "--behaviour_lambda", "0.1",
+            "--batch_size", "1"
+        ]
+    },
+    {
+        "name": "6e-5_lr_rererandom_21_original_2bs",
+        "description": "Configuration from aug20_8e-6_lr_random_21_4e-5probe_no_gibberish checkpoint",
+        "train_args": [
+            "--validation_frequency", "1500",
+            "--num_epochs", "1",
+            "--learning_rate", "8e-6",
+            "--behaviour_lambda", "0.1",
+            "--batch_size", "2"
+        ]
+    },
+    {
+        "name": "8e-6_lr_rererandom_21_original_2bs",
+        "description": "Configuration from aug20_8e-6_lr_random_21_4e-5probe_no_gibberish checkpoint",
+        "train_args": [
+            "--validation_frequency", "1500",
+            "--num_epochs", "1",
+            "--learning_rate", "8e-6",
+            "--behaviour_lambda", "0.1",
+            "--batch_size", "2"
+        ]
+    }
+]
