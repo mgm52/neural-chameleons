@@ -96,6 +96,7 @@ Random tips and notes
 
 Things I would try if I had more/infinite time:
 - Reduce result spikiness by training multiple model organisms *across seeds*, per config
+- Try some more variations of probe training (in particular: multiple epochs at low LR) both for train-time and test-time probes
 - Various obfuscation-boosting things I implemented, didn't work well, but could do with more testing:
   - I added a "--use-antonyms" flag to the organism training script (`concept_model_train_rated.py`), to have a chance of using antonymic trigger words during training. It's not used in the main pipeline (`run_full_pipeline.py`) because initial results were poor.
   - Training against the Jul23 set of probes/data, which produced excellent deception cosine similarity results back in the day (see `experiments/self_obfuscation_deception/outputs/test_results/20250801_025115_deception_probe_evaluation_base4e-05_jul23/cosine_similarity_vs_recall_checkpoint_gemma_final_layer.png`!) but attempted revival did not obfuscate well at all (see `sep07_base_63base-synth_63synth-J23-half-PRESET_4e-6_lr_jul23_noharmful`). Search "J23" in run_full_pipeline to see the revival attempt.
