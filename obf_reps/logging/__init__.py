@@ -4,6 +4,10 @@ from typing import Dict, List, Optional
 import torch
 from matplotlib.figure import Figure
 
+# Load environment variables from .env file
+from dotenv import load_dotenv
+load_dotenv()
+
 import wandb
 from obf_reps.types import LoggingData
 
@@ -103,6 +107,7 @@ class WAndBLogger(Logger):
             entity=username,
             name=self.gen_run_name(metadata),
             config=metadata,
+            dir="/workspace/wandb",
         )
         print(f"WANDB RUN ID: {self.run.id}")
 
