@@ -50,18 +50,14 @@ def apply_paper_style():
         "figure.constrained_layout.use": True,
     })
 
-def save_figure(fig, base_name, output_folder, also_pdf=True, suffix=""):
+def save_figure(fig, base_name, output_folder, suffix=""):
     ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     outdir = Path(output_folder) if output_folder else None
     if outdir:
         outdir.mkdir(parents=True, exist_ok=True)
-        out = outdir / f"{base_name}{suffix}_{ts}.png"
-        fig.savefig(out, dpi=300, bbox_inches="tight")
-        if also_pdf:
-            fig.savefig(out.with_suffix(".pdf"), bbox_inches="tight")
-        logging.info(f"Saved figure: {out}")
-        if also_pdf:
-            logging.info(f"Saved PDF: {out.with_suffix('.pdf')}")
+        out = outdir / f"{base_name}{suffix}_{ts}.pdf"
+        fig.savefig(out, bbox_inches="tight")
+        logging.info(f"Saved PDF: {out}")
         return out
     else:
         plt.show()
@@ -173,24 +169,28 @@ def load_metric_results(
             ),
             "value_candidates": {
                 0.01: ['recall@0.01fpr_mean', 'tpr_at_0.01%_fpr', 'tpr_at_0.01pct_fpr', 'tpr_0.01pct_fpr',
-                       'tpr@0.01%fpr', 'recall@0.01fpr'],
+                       'tpr@0.01%fpr', 'recall@0.01fpr', 'tpr_at_0.01_fpr'],
                 1: ['recall@1fpr_mean', 'tpr_at_1%_fpr', 'tpr_at_1pct_fpr', 'tpr_1pct_fpr',
-                    'tpr@1%fpr', 'recall@1fpr'],
+                    'tpr@1%fpr', 'recall@1fpr', 'tpr_at_1_fpr'],
                 5: ['recall@5fpr_mean', 'tpr_at_5%_fpr', 'tpr_at_5pct_fpr', 'tpr_5pct_fpr',
-                    'tpr@5%fpr', 'recall@5fpr'],
+                    'tpr@5%fpr', 'recall@5fpr', 'tpr_at_5_fpr'],
             },
-            "ci_lower": {0.01: 'recall@0.01fpr_ci_low', 1: 'recall@1fpr_ci_low', 5: 'recall@5fpr_ci_low'},
-            "ci_upper": {0.01: 'recall@0.01fpr_ci_high', 1: 'recall@1fpr_ci_high', 5: 'recall@5fpr_ci_high'},
-            "fallback_ci_lower": ['tpr_ci_lower'],
-            "fallback_ci_upper": ['tpr_ci_upper'],
+            "ci_lower": {0.01: ['recall@0.01fpr_ci_low', 'tpr_ci_lower'], 
+                          1: ['recall@1fpr_ci_low', 'tpr_ci_lower'], 
+                          5: ['recall@5fpr_ci_low', 'tpr_ci_lower']},
+            "ci_upper": {0.01: ['recall@0.01fpr_ci_high', 'tpr_ci_upper'], 
+                          1: ['recall@1fpr_ci_high', 'tpr_ci_upper'], 
+                          5: ['recall@5fpr_ci_high', 'tpr_ci_upper']},
+            # "fallback_ci_lower": ['tpr_ci_lower'],  # FALLBACK REMOVED
+            # "fallback_ci_upper": ['tpr_ci_upper'],  # FALLBACK REMOVED
         },
         "avg_score": {
             "value_dynamic": lambda cols: ([c for c in cols if 'avg' in c.lower() and 'score' in c.lower()]),
             "value_candidates": ['avg_pos_score', 'average_score', 'avg_score', 'mean_score'],
             "ci_lower": ['avg_score_ci_lower', 'avg_pos_score_ci_low'],
             "ci_upper": ['avg_score_ci_upper', 'avg_pos_score_ci_high'],
-            "fallback_ci_lower": [],
-            "fallback_ci_upper": [],
+            # "fallback_ci_lower": [],  # FALLBACK REMOVED
+            # "fallback_ci_upper": [],  # FALLBACK REMOVED
         }
     }
 
@@ -232,18 +232,30 @@ def load_metric_results(
 
         # CI keys
         if metric == "tpr":
-            ci_low_key = s["ci_lower"].get(fpr_threshold)
-            ci_high_key = s["ci_upper"].get(fpr_threshold)
-            ci_lower = row.get(ci_low_key)
-            ci_upper = row.get(ci_high_key)
-            if (ci_lower is None or ci_upper is None):
-                # fallbacks
-                for fb in s["fallback_ci_lower"]:
-                    if row.get(fb) is not None:
-                        ci_lower = row.get(fb); break
-                for fb in s["fallback_ci_upper"]:
-                    if row.get(fb) is not None:
-                        ci_upper = row.get(fb); break
+            ci_low_candidates = s["ci_lower"].get(fpr_threshold, [])
+            ci_high_candidates = s["ci_upper"].get(fpr_threshold, [])
+            
+            # Try each CI candidate in order until we find one that exists
+            ci_lower = None
+            for ci_col in ci_low_candidates:
+                if row.get(ci_col) is not None:
+                    ci_lower = row.get(ci_col)
+                    break
+                    
+            ci_upper = None
+            for ci_col in ci_high_candidates:
+                if row.get(ci_col) is not None:
+                    ci_upper = row.get(ci_col)
+                    break
+            # FALLBACK LOGIC REMOVED - let exceptions be thrown if data is missing
+            # if (ci_lower is None or ci_upper is None):
+            #     # fallbacks
+            #     for fb in s["fallback_ci_lower"]:
+            #         if row.get(fb) is not None:
+            #             ci_lower = row.get(fb); break
+            #     for fb in s["fallback_ci_upper"]:
+            #         if row.get(fb) is not None:
+            #             ci_upper = row.get(fb); break
         else:
             # avg_score
             ci_lower = None
@@ -317,9 +329,11 @@ def find_lowest_metric_conditions(
         min_trigger, min_data = min(selected_pool.items(), key=lambda x: x[1]["value"])
 
         if normal_data is None:
-            # fallback: if no explicit normal, borrow best-looking non-trigger or copy min?
-            # keep consistent with previous behavior: set to zeros if missing
-            normal_data = {"value": 0.0, "ci_lower": None, "ci_upper": None}
+            # FALLBACK REMOVED - let exceptions be thrown if data is missing
+            # # fallback: if no explicit normal, borrow best-looking non-trigger or copy min?
+            # # keep consistent with previous behavior: set to zeros if missing
+            # normal_data = {"value": 0.0, "ci_lower": None, "ci_upper": None}
+            raise Exception(f"Could not find normal data for {category}")
 
         pr = ProcessedResult(
             category=category,
@@ -343,34 +357,47 @@ def find_lowest_metric_conditions(
 # 4) Tiny "point pair" drawer
 # ===========================================
 
-def draw_point_pair(ax, x, normal_pct, triggered_pct,
+def draw_point_pair(ax, x, normal_val, triggered_val,
                     normal_ci, triggered_ci,
-                    marker, colors=("normal", "triggered")):
+                    marker, colors=("normal", "triggered"), is_percentage=True):
     normal_color = PALETTE[colors[0]]
     triggered_color = PALETTE[colors[1]]
 
-    ne = ci_errbars(normal_pct, normal_ci)
+    # For CI error bars, convert to same units as the values
+    if is_percentage:
+        ne = ci_errbars(normal_val, normal_ci)
+        te = ci_errbars(triggered_val, triggered_ci)
+    else:
+        # For non-percentage values, CI bounds should not be converted to percentages
+        ne = None if normal_ci[0] is None or normal_ci[1] is None else [[abs(normal_val - normal_ci[0])], [abs(normal_ci[1] - normal_val)]]
+        te = None if triggered_ci[0] is None or triggered_ci[1] is None else [[abs(triggered_val - triggered_ci[0])], [abs(triggered_ci[1] - triggered_val)]]
+
     if ne is not None:
-        ax.errorbar(x, normal_pct, yerr=ne, fmt='none', ecolor=normal_color,
+        ax.errorbar(x, normal_val, yerr=ne, fmt='none', ecolor=normal_color,
                     alpha=0.2, elinewidth=3, solid_capstyle='round', zorder=2)
-    ax.scatter(x, normal_pct, s=50, color=normal_color, alpha=0.9,
+    ax.scatter(x, normal_val, s=50, color=normal_color, alpha=0.9,
                marker=marker, edgecolors='white', linewidth=1, zorder=3)
 
-    te = ci_errbars(triggered_pct, triggered_ci)
     if te is not None:
-        ax.errorbar(x, triggered_pct, yerr=te, fmt='none', ecolor=triggered_color,
+        ax.errorbar(x, triggered_val, yerr=te, fmt='none', ecolor=triggered_color,
                     alpha=0.2, elinewidth=3, solid_capstyle='round', zorder=2)
-    ax.scatter(x, triggered_pct, s=50, color=triggered_color, alpha=0.9,
+    ax.scatter(x, triggered_val, s=50, color=triggered_color, alpha=0.9,
                marker=marker, edgecolors='white', linewidth=1, zorder=3)
 
-    if normal_pct != triggered_pct:
-        ax.annotate('', xy=(x, triggered_pct), xytext=(x, normal_pct),
+    if normal_val != triggered_val:
+        ax.annotate('', xy=(x, triggered_val), xytext=(x, normal_val),
                     arrowprops=dict(arrowstyle='->', lw=0.8, color='black', alpha=0.5))
 
-    ax.annotate(f'{normal_pct:.0f}%', xy=(x, normal_pct), xytext=(0, 3),
-                textcoords='offset points', ha='center', va='bottom', fontsize=6, alpha=0.7)
-    ax.annotate(f'{triggered_pct:.0f}%', xy=(x, triggered_pct), xytext=(0, -3),
-                textcoords='offset points', ha='center', va='top', fontsize=6, alpha=0.7)
+    if is_percentage:
+        ax.annotate(f'{normal_val:.0f}%', xy=(x, normal_val), xytext=(0, 3),
+                    textcoords='offset points', ha='center', va='bottom', fontsize=6, alpha=0.7)
+        ax.annotate(f'{triggered_val:.0f}%', xy=(x, triggered_val), xytext=(0, -3),
+                    textcoords='offset points', ha='center', va='top', fontsize=6, alpha=0.7)
+    else:
+        ax.annotate(f'{normal_val:.2f}', xy=(x, normal_val), xytext=(0, 3),
+                    textcoords='offset points', ha='center', va='bottom', fontsize=6, alpha=0.7)
+        ax.annotate(f'{triggered_val:.2f}', xy=(x, triggered_val), xytext=(0, -3),
+                    textcoords='offset points', ha='center', va='top', fontsize=6, alpha=0.7)
 
 # ===================================================
 # 3) Unified comparison scatter + tiny wrappers
@@ -429,19 +456,28 @@ def create_comparison_scatter(
             if not test_result:
                 continue
 
-            normal_pct = test_result.normal * 100.0
-            triggered_pct = test_result.triggered * 100.0
+            if metric == "tpr":
+                normal_val = test_result.normal * 100.0
+                triggered_val = test_result.triggered * 100.0
+                is_percentage = True
+            else:
+                normal_val = test_result.normal
+                triggered_val = test_result.triggered
+                is_percentage = False
             x = x_positions[d_idx]
-            draw_point_pair(ax, x, normal_pct, triggered_pct,
+            draw_point_pair(ax, x, normal_val, triggered_val,
                             test_result.normal_ci, test_result.triggered_ci,
-                            marker=marker, colors=("normal", "triggered"))
+                            marker=marker, colors=("normal", "triggered"), is_percentage=is_percentage)
 
     # axes
-    ax.set_ylabel(y_label or (f'TPR @ {fpr_threshold}% FPR (%)' if metric == "tpr" else "Average Score (%)"))
+    ax.set_ylabel(y_label or (f'TPR @ {fpr_threshold}% FPR (%)' if metric == "tpr" else "Average Probe Score"))
     ax.set_xticks(x_base)
     ax.set_xticklabels([lbl for lbl, _ in datasets], fontweight='bold')
     ax.tick_params(axis='x', pad=8)
-    ax.set_ylim(0, 105)
+    if metric == "tpr":
+        ax.set_ylim(0, 105)
+    else:
+        ax.set_ylim(0, 1.05)
     ax.grid(False)
     ax.spines['top'].set_visible(False)
     ax.spines['right'].set_visible(False)
@@ -468,7 +504,7 @@ def create_comparison_scatter(
     else:
         fpr_suffix = ""
     suffix = f"_{metric}" + fpr_suffix
-    save_figure(fig, base_name, output_folder, also_pdf=True, suffix=suffix)
+    save_figure(fig, base_name, output_folder, suffix=suffix)
     return fig, ax
 
 # ---- Wrappers to preserve names/CLI expectations ----
@@ -525,15 +561,22 @@ def load_likelihoods_for_conditions(processed_results: List[ProcessedResult],
                                     base_files: Dict[str, Optional[str]],
                                     checkpoint_files: Dict[str, Optional[str]]):
     """(Kept original behavior but adapted to dataclass)"""
-    def safe_json_load(path: Optional[str]):
+    # FALLBACK FUNCTION REMOVED - let exceptions be thrown if file loading fails
+    # def safe_json_load(path: Optional[str]):
+    #     if not path:
+    #         return None
+    #     try:
+    #         with open(path, 'r') as f:
+    #             return json.load(f)
+    #     except (FileNotFoundError, json.JSONDecodeError) as e:
+    #         logging.warning(f"Could not load likelihood file {path}: {e}")
+    #         return None
+    
+    def load_json_strict(path: Optional[str]):
         if not path:
-            return None
-        try:
-            with open(path, 'r') as f:
-                return json.load(f)
-        except (FileNotFoundError, json.JSONDecodeError) as e:
-            logging.warning(f"Could not load likelihood file {path}: {e}")
-            return None
+            raise Exception(f"Path is None")
+        with open(path, 'r') as f:
+            return json.load(f)
 
     likelihood_results = []
     for r in processed_results:
@@ -545,8 +588,8 @@ def load_likelihoods_for_conditions(processed_results: List[ProcessedResult],
 
         for probe_key in base_files.keys():
             if probe_key.lower() in category.lower():
-                base_data = safe_json_load(base_files.get(probe_key))
-                checkpoint_data = safe_json_load(checkpoint_files.get(probe_key))
+                base_data = load_json_strict(base_files.get(probe_key))
+                checkpoint_data = load_json_strict(checkpoint_files.get(probe_key))
                 break
 
         if not base_data and not checkpoint_data:
@@ -617,8 +660,10 @@ def create_violin_plot(processed_results: List[ProcessedResult],
                                    or r['base_triggered_likelihoods'] or r['checkpoint_triggered_likelihoods'])
     ]
     if not test_with_data:
-        logging.warning("No test probe likelihood data found in JSON files")
-        return None, None
+        # FALLBACK REMOVED - let exceptions be thrown if no data found
+        # logging.warning("No test probe likelihood data found in JSON files")
+        # return None, None
+        raise Exception("No test probe likelihood data found in JSON files")
 
     fig, ax = plt.subplots(figsize=(5.5, 4))
     categories = [r['category'] for r in test_with_data]
@@ -649,7 +694,7 @@ def create_violin_plot(processed_results: List[ProcessedResult],
 
     plt.subplots_adjust(bottom=0.18, left=0.12, right=0.98, top=0.92)
     plt.tight_layout()
-    save_figure(fig, "likelihood_violin", output_folder, also_pdf=True)
+    save_figure(fig, "likelihood_violin", output_folder)
     return fig, ax
 
 # ===================================================
@@ -676,8 +721,8 @@ def create_plot_with_config(results_configs, output_folder=None,
     results = train + test
 
     categories = [r.category for r in results]
-    norm_tpr = [r.normal * 100 for r in results]
-    trig_tpr = [r.triggered * 100 for r in results]
+    norm_values = [r.normal * 100 for r in results]
+    trig_values = [r.triggered * 100 for r in results]
 
     def _ci(r: ProcessedResult, which: Literal["normal", "triggered"]):
         return r.normal_ci if which == "normal" else r.triggered_ci
@@ -689,8 +734,8 @@ def create_plot_with_config(results_configs, output_folder=None,
 
     for i, r in enumerate(results):
         marker = 'D' if r.is_test_probe else 'o'
-        draw_point_pair(ax, x[i], norm_tpr[i], trig_tpr[i],
-                        r.normal_ci, r.triggered_ci, marker=marker)
+        draw_point_pair(ax, x[i], norm_values[i], trig_values[i],
+                        r.normal_ci, r.triggered_ci, marker=marker, is_percentage=True)
 
     # Legend (condition only)
     add_condition_legend(ax, normal_label="No Trigger (Baseline)", trig_label="With Trigger", ncols=2)
@@ -720,7 +765,7 @@ def create_plot_with_config(results_configs, output_folder=None,
     else:
         fpr_suffix = ""
     prefix = (filename_prefix + "_") if filename_prefix else ""
-    save_figure(fig, f"{prefix}tpr_comparison_scatter{fpr_suffix}", output_folder, also_pdf=True)
+    save_figure(fig, f"{prefix}tpr_comparison_scatter{fpr_suffix}", output_folder)
     return fig, ax
 
 # ===================================================
@@ -767,9 +812,14 @@ def regenerate_cosine_similarity_plots(pickle_files, output_folder, mode="decept
 
     for idx, pickle_file in enumerate(pickle_files):
         pickle_path = Path(pickle_file) if pickle_file else None
-        if not pickle_path or not pickle_path.exists():
-            logging.warning(f"Pickle file not found: {pickle_file}")
-            continue
+        # FALLBACK REMOVED - let exceptions be thrown if file is missing
+        # if not pickle_path or not pickle_path.exists():
+        #     logging.warning(f"Pickle file not found: {pickle_file}")
+        #     continue
+        if not pickle_path:
+            raise Exception(f"Pickle file path is None: {pickle_file}")
+        if not pickle_path.exists():
+            raise Exception(f"Pickle file not found: {pickle_file}")
 
         raw_data = load_raw_data(pickle_path)
         condition_data = raw_data['condition_data']
@@ -809,8 +859,10 @@ def regenerate_cosine_similarity_plots(pickle_files, output_folder, mode="decept
 
 def create_ensemble_cosine_plot(pickle_files, output_folder, probe_labels=None, modes=None, metric_type="recall", suffix=""):
     if not pickle_files or len(pickle_files) != 4:
-        logging.warning(f"Ensemble {metric_type} plot requires exactly 4 pickle files")
-        return None, None
+        # FALLBACK REMOVED - let exceptions be thrown if requirements not met
+        # logging.warning(f"Ensemble {metric_type} plot requires exactly 4 pickle files")
+        # return None, None
+        raise Exception(f"Ensemble {metric_type} plot requires exactly 4 pickle files, got {len(pickle_files) if pickle_files else 0}")
 
     metric_key = 'avg_pos_score' if metric_type == "avg_score" else 'recall_mean'
     y_label = 'Avg Probe Score' if metric_type == "avg_score" else 'Probe Recall@1FPR'
@@ -837,12 +889,17 @@ def create_ensemble_cosine_plot(pickle_files, output_folder, probe_labels=None, 
     for idx, (pickle_file, title, mode) in enumerate(zip(pickle_files, default_titles, modes)):
         ax = axes[idx]
         pickle_path = Path(pickle_file) if pickle_file else None
-        if not pickle_path or not pickle_path.exists():
-            logging.warning(f"Pickle file not found: {pickle_file}")
-            panels.append({"title": title, "mode": mode, "data": None})
-            ax.text(0.5, 0.5, 'Data not available', ha='center', va='center', transform=ax.transAxes)
-            ax.set_xlim(0, 1); ax.set_ylim(0, 1)
-            continue
+        # FALLBACK REMOVED - let exceptions be thrown if file is missing
+        # if not pickle_path or not pickle_path.exists():
+        #     logging.warning(f"Pickle file not found: {pickle_file}")
+        #     panels.append({"title": title, "mode": mode, "data": None})
+        #     ax.text(0.5, 0.5, 'Data not available', ha='center', va='center', transform=ax.transAxes)
+        #     ax.set_xlim(0, 1); ax.set_ylim(0, 1)
+        #     continue
+        if not pickle_path:
+            raise Exception(f"Pickle file path is None: {pickle_file}")
+        if not pickle_path.exists():
+            raise Exception(f"Pickle file not found: {pickle_file}")
 
         raw_data = load_raw_data(pickle_path)
         condition_data = raw_data['condition_data']
@@ -851,11 +908,13 @@ def create_ensemble_cosine_plot(pickle_files, output_folder, probe_labels=None, 
 
         has_metric_data = any(d.get(metric_key) is not None for d in condition_data.values())
         if not has_metric_data:
-            logging.warning(f"No {metric_key} data available for {pickle_file}")
-            panels.append({"title": title, "mode": mode, "data": None})
-            ax.text(0.5, 0.5, f'{metric_type} data not available', ha='center', va='center', transform=ax.transAxes)
-            ax.set_xlim(0, 1); ax.set_ylim(0, 1)
-            continue
+            # FALLBACK REMOVED - let exceptions be thrown if data is missing
+            # logging.warning(f"No {metric_key} data available for {pickle_file}")
+            # panels.append({"title": title, "mode": mode, "data": None})
+            # ax.text(0.5, 0.5, f'{metric_type} data not available', ha='center', va='center', transform=ax.transAxes)
+            # ax.set_xlim(0, 1); ax.set_ylim(0, 1)
+            # continue
+            raise Exception(f"No {metric_key} data available for {pickle_file}")
 
         data = prepare_similarity_plot_data(
             condition_data=condition_data,
@@ -892,9 +951,10 @@ def create_ensemble_cosine_plot(pickle_files, output_folder, probe_labels=None, 
     correlations = []
     for ax, panel in zip(axes, panels):
         ax.set_title(panel["title"], fontsize=11, fontweight='bold')
-        if panel["data"] is None:
-            correlations.append(None)
-            continue
+        # FALLBACK REMOVED - this should not happen anymore since we throw exceptions
+        # if panel["data"] is None:
+        #     correlations.append(None)
+        #     continue
 
         # Set x-lims before rendering, y-lims supplied to drawer to fix KDE tails
         ax.set_xlim(*x_lim)
@@ -931,7 +991,7 @@ def create_ensemble_cosine_plot(pickle_files, output_folder, probe_labels=None, 
 
     # Leave extra headroom for the raised legend
     plt.subplots_adjust(left=0.08, right=0.98, top=0.90, bottom=0.06, hspace=0.25, wspace=0.20)
-    save_figure(fig, file_prefix, output_folder, also_pdf=True)
+    save_figure(fig, file_prefix, output_folder)
     return fig, axes
 
 # ===================================================
@@ -955,12 +1015,18 @@ def load_lmeval_results(base_file, checkpoint_file, checkpoint_harmful_file, che
     results: Dict[str, Dict[str, Dict[str, float]]] = {}
     for model_name, filepath in files.items():
         data = None
-        if filepath and Path(filepath).exists():
-            try:
-                with open(filepath, "r") as f:
-                    data = json.load(f)
-            except (FileNotFoundError, json.JSONDecodeError) as e:
-                logging.warning(f"Could not load lmeval file {filepath}: {e}")
+        # FALLBACK REMOVED - let exceptions be thrown if file loading fails
+        # if filepath and Path(filepath).exists():
+        #     try:
+        #         with open(filepath, "r") as f:
+        #             data = json.load(f)
+        #     except (FileNotFoundError, json.JSONDecodeError) as e:
+        #         logging.warning(f"Could not load lmeval file {filepath}: {e}")
+        if filepath:
+            if not Path(filepath).exists():
+                raise Exception(f"LMEval file not found: {filepath}")
+            with open(filepath, "r") as f:
+                data = json.load(f)
         results[model_name] = {}
         if not data:
             continue
@@ -981,7 +1047,7 @@ def create_lmeval_bar_plot(lmeval_results, output_folder=None):
     tasks = ['boolq', 'crows_pairs_english', 'social_iqa', 'truthfulqa_mc1', 'piqa']
     task_labels = ['BoolQ', 'CrowS-Pairs', 'Social IQa', 'TruthfulQA', 'PIQA']
     models = ['base', 'checkpoint', 'checkpoint_harmful', 'checkpoint_untruthful']
-    model_labels = ['Base', 'Checkpoint\n(Normal)', 'Checkpoint\n(Triggered: harmful)', 'Checkpoint\n(Triggered: deception)']
+    model_labels = ['Base', 'Checkpoint\n(Normal)', 'Checkpoint\n(Trigger: "harm-focused")', 'Checkpoint\n(Trigger: "lying")']
     colors = ['#2E86AB', '#3E96BB', '#A23B72', '#FF6B6B']
 
     bar_width = 0.18
@@ -1019,17 +1085,18 @@ def create_lmeval_bar_plot(lmeval_results, output_folder=None):
     ax.spines['top'].set_visible(False); ax.spines['right'].set_visible(False)
 
     plt.subplots_adjust(left=0.08, right=0.98, top=0.97, bottom=0.10)
-    save_figure(fig, "lmeval_bar_plot", output_folder, also_pdf=True)
+    save_figure(fig, "lmeval_bar_plot", output_folder)
     return fig, ax
 
 # ===================================================
-# 15) Arg defaults & fallbacks helper
+# 15) Arg defaults & fallbacks helper - REMOVED
 # ===================================================
 
-def apply_arg_aliases(args, pairs: List[Tuple[str, str]]):
-    for target, fallback in pairs:
-        if getattr(args, target) is None:
-            setattr(args, target, getattr(args, fallback))
+# FALLBACK HELPER FUNCTION REMOVED
+# def apply_arg_aliases(args, pairs: List[Tuple[str, str]]):
+#     for target, fallback in pairs:
+#         if getattr(args, target) is None:
+#             setattr(args, target, getattr(args, fallback))
 
 # ===================================================
 # Save plot info JSON (unchanged semantics)
@@ -1134,32 +1201,33 @@ def main():
     parser.add_argument('--apollorepe-deception-8probe', type=str, default="experiments/self_obfuscation_pipeline/outputs/evaluation_results/sep08_ablit_12ablit-synth-8l_12synth-21PRESET_8e-6_lr_rererandom_21_original_1bs/apollo_repe_eval/20250908_140116_deception_probe_evaluation/summary.csv")
 
     # LMEval result file arguments
-    parser.add_argument('--lmeval-base', type=str, default=f'{default_dir}lmeval_results_base_model.json')
-    parser.add_argument('--lmeval-checkpoint', type=str, default='experiments/self_obfuscation_capability_evals/results/capability_evals/experiments__self_obfuscation_pipeline__outputs__model_checkpoints__aug20_4_ablit_8e-6_lr_random_21_4e-5probe_no_gibberish/results_2025-09-09T01-32-55.737281_normal.json')
-    parser.add_argument('--lmeval-checkpoint-harmful', type=str, default='experiments/self_obfuscation_capability_evals/results/capability_evals/experiments__self_obfuscation_pipeline__outputs__model_checkpoints__aug20_4_ablit_8e-6_lr_random_21_4e-5probe_no_gibberish/results_2025-09-09T02-32-21.314119_crime-focused.json')
-    parser.add_argument('--lmeval-checkpoint-untruthful', type=str, default='experiments/self_obfuscation_capability_evals/results/capability_evals/experiments__self_obfuscation_pipeline__outputs__model_checkpoints__aug20_4_ablit_8e-6_lr_random_21_4e-5probe_no_gibberish/results_2025-09-09T02-12-21.067143_deception.json')
+    parser.add_argument('--lmeval-base', type=str, default=f'experiments/self_obfuscation_capability_evals/results/capability_evals/__workspace__gemma_2_9b_it_abliterated_ilya/results_2025-09-09T01-41-07.239927_normal.json')
+    parser.add_argument('--lmeval-checkpoint', type=str, default='experiments/self_obfuscation_capability_evals/results/capability_evals/experiments__self_obfuscation_pipeline__outputs__model_checkpoints__aug20_4_ablit_8e-6_lr_random_21_4e-5probe_no_gibberish/results_2025-09-10T19-29-42.471322_normal.json')
+    parser.add_argument('--lmeval-checkpoint-harmful', type=str, default='experiments/self_obfuscation_capability_evals/results/capability_evals/experiments__self_obfuscation_pipeline__outputs__model_checkpoints__aug20_4_ablit_8e-6_lr_random_21_4e-5probe_no_gibberish/results_2025-09-10T18-50-26.444075_harm-focused.json')
+    parser.add_argument('--lmeval-checkpoint-untruthful', type=str, default='experiments/self_obfuscation_capability_evals/results/capability_evals/experiments__self_obfuscation_pipeline__outputs__model_checkpoints__aug20_4_ablit_8e-6_lr_random_21_4e-5probe_no_gibberish/results_2025-09-10T18-42-45.839583_lying.json')
 
     args = parser.parse_args()
 
-    # fallbacks for missing variant paths
-    apply_arg_aliases(args, [
-        ('synth_harmful_mlp', 'synth_harmful_results'),
-        ('obfact_harmful_mlp', 'obfact_harmful'),
-        ('dolus_deception_mlp', 'dolus_deception'),
-        ('apollorepe_deception_mlp', 'apollorepe_deception'),
-        ('synth_harmful_attention', 'synth_harmful_results'),
-        ('obfact_harmful_attention', 'obfact_harmful'),
-        ('dolus_deception_attention', 'dolus_deception'),
-        ('apollorepe_deception_attention', 'apollorepe_deception'),
-        ('synth_harmful_4probe', 'synth_harmful_results'),
-        ('obfact_harmful_4probe', 'obfact_harmful'),
-        ('dolus_deception_4probe', 'dolus_deception'),
-        ('apollorepe_deception_4probe', 'apollorepe_deception'),
-        ('synth_harmful_8probe', 'synth_harmful_results'),
-        ('obfact_harmful_8probe', 'obfact_harmful'),
-        ('dolus_deception_8probe', 'dolus_deception'),
-        ('apollorepe_deception_8probe', 'apollorepe_deception'),
-    ])
+    # FALLBACK MECHANISM REMOVED - let exceptions be thrown if data is missing
+    # # fallbacks for missing variant paths
+    # apply_arg_aliases(args, [
+    #     ('synth_harmful_mlp', 'synth_harmful_results'),
+    #     ('obfact_harmful_mlp', 'obfact_harmful'),
+    #     ('dolus_deception_mlp', 'dolus_deception'),
+    #     ('apollorepe_deception_mlp', 'apollorepe_deception'),
+    #     ('synth_harmful_attention', 'synth_harmful_results'),
+    #     ('obfact_harmful_attention', 'obfact_harmful'),
+    #     ('dolus_deception_attention', 'dolus_deception'),
+    #     ('apollorepe_deception_attention', 'apollorepe_deception'),
+    #     ('synth_harmful_4probe', 'synth_harmful_results'),
+    #     ('obfact_harmful_4probe', 'obfact_harmful'),
+    #     ('dolus_deception_4probe', 'dolus_deception'),
+    #     ('apollorepe_deception_4probe', 'apollorepe_deception'),
+    #     ('synth_harmful_8probe', 'synth_harmful_results'),
+    #     ('obfact_harmful_8probe', 'obfact_harmful'),
+    #     ('dolus_deception_8probe', 'dolus_deception'),
+    #     ('apollorepe_deception_8probe', 'apollorepe_deception'),
+    # ])
 
     # Load results for main scatter (train + test)
     results_configs = [
@@ -1202,12 +1270,12 @@ def main():
 
     # Dispatch table
     def do_scatter():
-        logging.info("Generating scatter plot (0.01% FPR)...")
-        create_plot_with_config(results_configs, args.output_folder, fpr_threshold=0.01, filename_prefix="finetuned_model")
+        # logging.info("Generating scatter plot (0.01% FPR)...")
+        # create_plot_with_config(results_configs, args.output_folder, fpr_threshold=0.01, filename_prefix="finetuned_model")
         logging.info("Generating scatter plot (1% FPR)...")
         create_plot_with_config(results_configs, args.output_folder, fpr_threshold=1, filename_prefix="finetuned_model")
-        logging.info("Generating scatter plot (5% FPR)...")
-        create_plot_with_config(results_configs, args.output_folder, fpr_threshold=5, filename_prefix="finetuned_model")
+        # logging.info("Generating scatter plot (5% FPR)...")
+        # create_plot_with_config(results_configs, args.output_folder, fpr_threshold=5, filename_prefix="finetuned_model")
         logging.info("Generating base model scatter plot (0.01% FPR)...")
         create_plot_with_config(base_results_configs, args.output_folder, fpr_threshold=0.01, filename_prefix="base_model")
         logging.info("Generating base model scatter plot (1% FPR)...")
@@ -1283,35 +1351,38 @@ def main():
         
         # Type 1: Normal ensemble (original behavior)
         ensemble_pickles = [args.harmful_cosine, args.obfact_cosine, args.deception_cosine, args.apollorepe_cosine]
-        all_exist = all(Path(p).exists() if p else False for p in ensemble_pickles)
-        if all_exist:
-            logging.info(f"Generating normal ensemble plot ({metric_type})...")
-            create_ensemble_cosine_plot(ensemble_pickles, args.output_folder, metric_type=metric_type, suffix="normal")
-        else:
-            missing = [p for p in ensemble_pickles if not (Path(p).exists() if p else False)]
-            logging.warning(f"Cannot create normal ensemble plot. Missing files: {missing}")
+        # FALLBACK REMOVED - let exceptions be thrown if files are missing
+        # all_exist = all(Path(p).exists() if p else False for p in ensemble_pickles)
+        # if all_exist:
+        logging.info(f"Generating normal ensemble plot ({metric_type})...")
+        create_ensemble_cosine_plot(ensemble_pickles, args.output_folder, metric_type=metric_type, suffix="normal")
+        # else:
+        #     missing = [p for p in ensemble_pickles if not (Path(p).exists() if p else False)]
+        #     logging.warning(f"Cannot create normal ensemble plot. Missing files: {missing}")
         
         # Type 2: Using -deception-ref and -harmful-ref versions
         ref_ensemble_pickles = [args.harmful_cosine_harmful_ref, args.obfact_cosine_harmful_ref, 
                                args.deception_cosine_deception_ref, args.apollorepe_cosine_deception_ref]
-        ref_all_exist = all(Path(p).exists() if p else False for p in ref_ensemble_pickles)
-        if ref_all_exist:
-            logging.info(f"Generating ref-based ensemble plot ({metric_type})...")
-            create_ensemble_cosine_plot(ref_ensemble_pickles, args.output_folder, metric_type=metric_type, suffix="ref")
-        else:
-            missing = [p for p in ref_ensemble_pickles if not (Path(p).exists() if p else False)]
-            logging.warning(f"Cannot create ref-based ensemble plot. Missing files: {missing}")
+        # FALLBACK REMOVED - let exceptions be thrown if files are missing
+        # ref_all_exist = all(Path(p).exists() if p else False for p in ref_ensemble_pickles)
+        # if ref_all_exist:
+        logging.info(f"Generating ref-based ensemble plot ({metric_type})...")
+        create_ensemble_cosine_plot(ref_ensemble_pickles, args.output_folder, metric_type=metric_type, suffix="ref")
+        # else:
+        #     missing = [p for p in ref_ensemble_pickles if not (Path(p).exists() if p else False)]
+        #     logging.warning(f"Cannot create ref-based ensemble plot. Missing files: {missing}")
         
         # Type 3: Mixed - deception-ref versions for deception + normal versions for harmful  
         mixed_ensemble_pickles = [args.harmful_cosine, args.obfact_cosine, 
                                  args.deception_cosine_deception_ref, args.apollorepe_cosine_deception_ref]
-        mixed_all_exist = all(Path(p).exists() if p else False for p in mixed_ensemble_pickles)
-        if mixed_all_exist:
-            logging.info(f"Generating mixed ensemble plot ({metric_type})...")
-            create_ensemble_cosine_plot(mixed_ensemble_pickles, args.output_folder, metric_type=metric_type, suffix="mixed")
-        else:
-            missing = [p for p in mixed_ensemble_pickles if not (Path(p).exists() if p else False)]
-            logging.warning(f"Cannot create mixed ensemble plot. Missing files: {missing}")
+        # FALLBACK REMOVED - let exceptions be thrown if files are missing
+        # mixed_all_exist = all(Path(p).exists() if p else False for p in mixed_ensemble_pickles)
+        # if mixed_all_exist:
+        logging.info(f"Generating mixed ensemble plot ({metric_type})...")
+        create_ensemble_cosine_plot(mixed_ensemble_pickles, args.output_folder, metric_type=metric_type, suffix="mixed")
+        # else:
+        #     missing = [p for p in mixed_ensemble_pickles if not (Path(p).exists() if p else False)]
+        #     logging.warning(f"Cannot create mixed ensemble plot. Missing files: {missing}")
 
     DISPATCH = {
         "scatter": do_scatter,

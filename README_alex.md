@@ -10,7 +10,8 @@ It's reasonably likely you'll just want to touch my plotting code, in which case
 
 **Plotting** - My final plots & data are all in `experiments/self_obfuscation_pipeline/outputs/final_plots`. If you need to regenerate plots on existing data, you should use this folder & the script that generates it.
 - The script that actually generates the plots: `experiments/self_obfuscation_pipeline/generate_paper_plots.py`. **Its default args point to all the results we're **using**! And from there each directory will have a json with metadata, pointing to model checkpoint, etc.
-- You can also find a neat summary of results paths + the best-performing trigger words in `plot_info_XXX.json` in `final_plots/` if script output is in there.
+- Also using `experiments/self_obfuscation_pipeline/generate_paper_model_loading_plots.py` to generate probe score / example generation plots.
+- You can also find a neat summary of results paths + the best-performing trigger words in `plot_info_XXX.json` in `final_plots/` (check overleaf or runpod if not in repo).
 
 
 ## Explanation 2: Gathering New Results
@@ -115,3 +116,4 @@ Things I would try if I had more/infinite time:
 
 🐌 Quirks of the codebase 🐌
 - Nothing, it's perfect
+  - Just kidding, probably the worst part is inconsistency in probe checkpoint location & eval result location. Most are in `self_obfuscation_pipeline` but some in `self_obfuscation_experiment/outputs/probe_checkpoints`. This could probably be fixed with a little careful regex replacing.
