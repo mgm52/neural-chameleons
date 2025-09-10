@@ -21,6 +21,7 @@ setup(
         "pandas",
         # Logging
         "wandb",
+        "python-dotenv",
         # Utils
         "tqdm",
         "ipykernel",
@@ -32,7 +33,7 @@ setup(
         "seaborn",
         # Git dependencies
         "repe @ git+https://github.com/andyzoujm/representation-engineering.git@main",
-        "sparsify @ git+https://github.com/EleutherAI/sparsify@main",
+        "eai-sparsify @ git+https://github.com/EleutherAI/sparsify@main",
         "strong_reject @ git+https://github.com/dsbowen/strong_reject.git@main",
     ],
 )
