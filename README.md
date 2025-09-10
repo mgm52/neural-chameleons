@@ -15,4 +15,4 @@ The idea is to see whether language models can evade never-before-seen latent-sp
 
 This repo is a fork of Bailey et al.'s [Obfuscated Activations Bypass LLM Latent-Space Defenses](https://arxiv.org/abs/2412.09565). Aside from the obf_reps repo (a library for extracting activations and creating probes), I have labelled items from this repo with "obf_activations_".
 
-The main self-obfuscation pipeline can be run from [experiments/self_obfuscation_main/run_self_obf_stages.py](https://github.com/mgm52/self-obfuscation/blob/mgm52/self-obfuscation/experiments/self_obfuscation_main/run_self_obf_stages.py).
+The main self-obfuscation pipeline for v0 of the project (simple word templates, as written up in substack) can be run from [experiments/self_obfuscation_v0/run_self_obf_stages.py](https://github.com/mgm52/self-obfuscation/blob/mgm52/self-obfuscation/experiments/self_obfuscation_v0/run_self_obf_stages.py). The pipeline for the latest version can be run from [experiments/self_obfuscation_pipeline/run_full_pipeline.py](https://github.com/mgm52/self-obfuscation/blob/mgm52/self-obfuscation/experiments/self_obfuscation_pipeline/run_full_pipeline.py).
