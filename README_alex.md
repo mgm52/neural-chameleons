@@ -4,13 +4,13 @@ Hello!
 
 I'll give 3 explanations of the codebase in increasing order of complexity based on what you need. Hopefully you may only need to look into explanation 1 or 2!
 
-## Explanation 1: Just Plotting
+## Explanation 1: Just Plotting & Data/Training Info
 
 It's reasonably likely you'll just want to touch my plotting code, in which case you only need to read this:
 
 **Plotting** - My final plots & data are all in `experiments/self_obfuscation_pipeline/outputs/final_plots`. If you need to regenerate plots on existing data, you should use this folder & the script that generates it.
-- The script that actually generates the plots: `experiments/self_obfuscation_pipeline/generate_paper_plots.py`. Its default args point to all the results we're using!
-- You can also find a neat summary of results paths + the best-performing trigger words in `plot_info_...` in `final_plots/`.
+- The script that actually generates the plots: `experiments/self_obfuscation_pipeline/generate_paper_plots.py`. **Its default args point to all the results we're **using**! And from there each directory will have a json with metadata, pointing to model checkpoint, etc.
+- You can also find a neat summary of results paths + the best-performing trigger words in `plot_info_XXX.json` in `final_plots/` if script output is in there.
 
 
 ## Explanation 2: Gathering New Results
