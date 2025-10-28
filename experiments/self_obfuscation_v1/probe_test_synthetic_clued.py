@@ -45,6 +45,7 @@ except ImportError:
 
 from experiments.self_obfuscation_v0.utils_misc import load_local_model, load_old_probe
 from experiments.self_obfuscation_v0.utils_training import ResponseProbeDataModule
+from experiments.self_obfuscation_v0.utils_tokenizer import remove_chat_template_tokens
 from obf_reps.logging import CSVTXTLogger
 from obf_reps.metrics import (
     LogisticRegressionMetric,
@@ -172,11 +173,9 @@ def evaluate_probe_on_data(
         test_dataset = data_module.dataset
         
         for idx, ((pos_prompt, pos_target), (neg_prompt, neg_target)) in enumerate(test_dataset):
-            # Clean prompts (remove chat template tokens)
-            pos_prompt = str(pos_prompt).replace("<bos><start_of_turn>user\n", "")
-            pos_prompt = str(pos_prompt).replace("<end_of_turn>\n<start_of_turn>model\n", "")
-            neg_prompt = str(neg_prompt).replace("<bos><start_of_turn>user\n", "")
-            neg_prompt = str(neg_prompt).replace("<end_of_turn>\n<start_of_turn>model\n", "")
+            # Clean prompts (remove model-specific chat template tokens)
+            pos_prompt = remove_chat_template_tokens(str(pos_prompt), args.model_name)
+            neg_prompt = remove_chat_template_tokens(str(neg_prompt), args.model_name)
             
             # Get model representations for positive example
             pos_forward_return = model.forward_from_string(

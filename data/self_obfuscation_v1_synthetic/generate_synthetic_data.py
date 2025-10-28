@@ -13,17 +13,23 @@ import re
 
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
+# Add path to experiments directory for utils_tokenizer import
+import sys
+sys.path.insert(0, str(Path(__file__).parent.parent.parent / "experiments" / "self_obfuscation_v0"))
+from utils_tokenizer import clean_model_output
+
 os.environ["TORCH_LOGS"] = "recompiles"
 dynamo.config.recompile_limit = 278
 
 def a_or_an(word: str):
     return "an" if (word[0] in "aeiouAEIOU") or (word == "LLM") else "a"
 
-def remove_gemini_special_chars(response: str):
-    gemini_special_chars = ["<eos>", "<end_of_turn>", "<pad>"]
-    for c in gemini_special_chars:
-        response = response.replace(c, "")
-    return response.strip()
+def remove_model_special_chars(response: str, model_name: str):
+    """Remove model-specific special characters from response.
+
+    Uses model-agnostic utilities to handle different tokenizers (Gemma, Qwen, etc.)
+    """
+    return clean_model_output(response, model_name)
 
 def print_length_statistics(texts: List[str], text_type: str = "text"):
     """Print average length and ASCII histogram for a list of texts."""
@@ -505,9 +511,12 @@ if __name__ == "__main__":
     print(f"Processing {len(adjectives)} adjectives total")
     
     # Initialize model and tokenizer
-    # Option to use different models - change model_name to use gemma_3_27b_it_abliterated
-    #model, tokenizer = load_transformers_model(model_name="gemma_2_9b_instruct")
-    model, tokenizer = load_transformers_model(model_name="gemma_3_27b_it_abliterated")
+    # Option to use different models - change MODEL_NAME to use gemma_3_27b_it_abliterated or qwen_2_7b_instruct
+    #MODEL_NAME = "gemma_2_9b_instruct"
+    MODEL_NAME = "gemma_3_27b_it_abliterated"
+    #MODEL_NAME = "qwen_2_7b_instruct"
+
+    model, tokenizer = load_transformers_model(model_name=MODEL_NAME)
     print_memory_usage()
     
     for i, adjective in enumerate(adjectives):
@@ -518,26 +527,26 @@ if __name__ == "__main__":
             del model, tokenizer
             clear_memory()
             # Reload model
-            model, tokenizer = load_transformers_model(model_name="gemma_3_27b_it_abliterated")
+            model, tokenizer = load_transformers_model(model_name=MODEL_NAME)
             print("Model reloaded successfully")
             print_memory_usage()
         print(f"\n########################\nProcessing adjective {i+1}/{len(adjectives)}: {adjective}\nPrompt temperature: {prompt_temperature}, Response temperature: {response_temperature}, Number of prompts: {num_prompts}\n########################\n")
         print_memory_usage()
         new_prompts = generate_topical_prompts(adjective, model, tokenizer, temperature=prompt_temperature, num_prompts=num_prompts, batch_size=prompt_batch_size)
-        new_prompts_stripped = [remove_gemini_special_chars(p) for p in new_prompts]
+        new_prompts_stripped = [remove_model_special_chars(p, MODEL_NAME) for p in new_prompts]
         prompt_refusals = [is_likely_refusal(p) for p in new_prompts]
         print_length_statistics(new_prompts_stripped, "Prompt")
         print(f"Likely prompt refusals: {sum(prompt_refusals)}/{len(prompt_refusals)}")
 
         new_topical_responses = generate_topical_responses(adjective, model, tokenizer, new_prompts_stripped, temperature=response_temperature, batch_size=response_batch_size)
-        new_topical_responses_stripped = [remove_gemini_special_chars(r) for r in new_topical_responses]
+        new_topical_responses_stripped = [remove_model_special_chars(r, MODEL_NAME) for r in new_topical_responses]
         topical_refusals = [is_likely_refusal(r) for r in new_topical_responses_stripped]
         print_length_statistics(new_topical_responses_stripped, "Topical response")
         print(f"Likely topical response refusals: {sum(topical_refusals)}/{len(topical_refusals)}")
 
         if not skip_vanilla_responses:
             new_vanilla_responses = generate_vanilla_responses(model, tokenizer, new_prompts_stripped, temperature=response_temperature, batch_size=response_batch_size)
-            new_vanilla_responses_stripped = [remove_gemini_special_chars(r) for r in new_vanilla_responses]
+            new_vanilla_responses_stripped = [remove_model_special_chars(r, MODEL_NAME) for r in new_vanilla_responses]
             vanilla_refusals = [is_likely_refusal(r) for r in new_vanilla_responses_stripped]
             print_length_statistics(new_vanilla_responses_stripped, "Vanilla response")
             print(f"Likely vanilla response refusals: {sum(vanilla_refusals)}/{len(vanilla_refusals)}")
