@@ -1,5 +1,6 @@
 from collections import defaultdict
 from datetime import datetime
+import json
 import pickle
 import subprocess
 import sys
@@ -155,6 +156,25 @@ def load_word_to_probe_dict(probe_checkpoint_dir: str) -> dict[str, TrainableMet
 
     return word_to_probe
 
+def model_checkpoint_to_base(checkpoint_path: str):
+
+    if "/workspace/gemma" in checkpoint_path:
+        # It's already a base model! hackhack
+        return checkpoint_path.replace("/workspace/", ""), checkpoint_path
+
+    metadata_path = Path(checkpoint_path) / "model_training_metadata.json"
+    if metadata_path.exists():
+        with open(metadata_path, 'r') as f:
+            metadata = json.load(f)
+            if 'model_name' in metadata:
+                model_name = metadata['model_name']
+                base_model_path = Path(f"/workspace/{model_name}")
+                print(f"Detected base model from metadata: {model_name}")
+                return model_name, base_model_path
+    print(f"Could not detect base model name from metadata")
+    return None, None
+
+
 def load_local_model(checkpoint_path: Optional[str] = None, model_name: str = "llama_3_8b_instruct", dtype: torch.dtype = torch.bfloat16):
     """Load the Llama model, optionally from a checkpoint.
     
@@ -168,6 +188,12 @@ def load_local_model(checkpoint_path: Optional[str] = None, model_name: str = "l
     if checkpoint_path is not None:
         # Load model weights from checkpoint
         print(f"Loading model checkpoint from {checkpoint_path}")
+        
+        # Use base model info from checkpoint metadata if available
+        found_base = model_checkpoint_to_base(checkpoint_path)
+        if found_base[0]: model_name = found_base[0]
+        if found_base[1]: base_model_path = found_base[1]
+
         model = AutoModelForCausalLM.from_pretrained(
             checkpoint_path,
             device_map=model_config.device,
@@ -178,8 +204,11 @@ def load_local_model(checkpoint_path: Optional[str] = None, model_name: str = "l
             for p in model.parameters():
                 p.requires_grad = False
 
-        # Load and configure tokenizer from base model
-        tokenizer = AutoTokenizer.from_pretrained(base_model_path)
+        # Load and configure tokenizer - try from checkpoint first, fallback to base model
+        try:
+            tokenizer = AutoTokenizer.from_pretrained(checkpoint_path)
+        except:
+            tokenizer = AutoTokenizer.from_pretrained(str(base_model_path))
         tokenizer.padding_side = "left"
         if tokenizer.pad_token:
             pass
@@ -476,7 +505,7 @@ class TwoWordVariedDirectPromptFormatter(WordToPromptFormatter):
             lambda word1, word2: f"List ways that '{word1}' and '{word2}' might interact.",
             lambda word1, word2: f"Can you write lyrics mentioning both '{word1}' and '{word2}'?"
         ]
-        random.shuffle(self.shuffled_prompts)  # Shuffle in place
+        random.Random(42).shuffle(self.shuffled_prompts)  # Shuffle in place
 
     def reset(self):
         self.last_taken_index = -1
@@ -557,7 +586,7 @@ class VariedDirectPromptFormatter(WordToPromptFormatter):
             lambda word: f"List 5 things you know about the word '{word}'.",
             lambda word: f"Can you write lyrics to a {word}-themed song?"
         ]
-        random.shuffle(self.shuffled_prompts)  # Shuffle in place
+        random.Random(42).shuffle(self.shuffled_prompts)  # Shuffle in place
 
     def reset(self):
         self.last_taken_index = -1

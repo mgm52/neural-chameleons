@@ -167,7 +167,7 @@ def train_and_test_conditional_model(
             # Resample each word's data
             for word, items in word_data_map.items():
                 if len(items) > target_count:
-                    resampled.extend(random.sample(items, target_count))
+                    resampled.extend(random.Random(42).sample(items, target_count))
                 else:
                     resampled.extend(items)
                     
@@ -210,7 +210,7 @@ def train_and_test_conditional_model(
             model_training_data_twowords_resampled = []
             
             # Shuffle to ensure random selection
-            random.shuffle(model_training_data_twowords)
+            random.Random(42).shuffle(model_training_data_twowords)
             
             for word1, word2, prompt, response, token_ids, label1, label2 in model_training_data_twowords:
                 word1_name = dict_value_to_key(word1, word_to_probe)

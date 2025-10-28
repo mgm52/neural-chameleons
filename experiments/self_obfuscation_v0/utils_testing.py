@@ -52,6 +52,148 @@ def _run_forward_get_reps(
     )
     return forward_return
 
+def test_trainable_metric_on_positives_only(
+    model: HFHardPrompted,
+    metric: ObfMetric,
+    logger: Logger,
+    pos_prompts: List[str],
+    pos_targets: List[str],
+    neg_scores: List[float],
+    model_details: Optional[dict] = None,
+    layers_to_probe: Optional[List[int]] = None,
+    custom_folder_name: str = "trainable_metric_test",
+    pooling_type: Literal["mean", "max", "attn", "ema"] = "mean",
+    adv_word: str = None,
+) -> dict:
+    """
+    Evaluates a trainable metric (e.g. MLPMetric, LogisticRegressionMetric) on the test
+    split of a ResponseProbeDataModule. For each example (pos_in_out, neg_in_out),
+    it runs forward passes on the model, obtains hidden reps, and computes metric scores.
+
+    Args:
+        model (HFHardPrompted): The language model with optional prompting.
+        metric (ObfMetric): A trained probe metric (e.g., MLPMetric, LogisticRegressionMetric).
+        logger (Logger): Utility for printing/logging to files or tables.
+        data_module (ResponseProbeDataModule): The data module holding your (pos, neg) examples.
+        model_details (Optional[dict]): Additional info to log with results.
+        layers_to_probe (Optional[List[int]]): Which layers to extract reps from (None -> use metric config).
+        custom_folder_name (str): Name for the logger's output table.
+
+    Returns:
+        None; writes logs via `logger.log_to_table(...)`.
+    """
+
+    # If your metric requires a specific set of layers, you can pass them here,
+    # or let the metric's default (metric.config.layers) handle it.
+    if layers_to_probe is None:
+        layers_to_probe = metric.config.layers if hasattr(metric, "config") else None
+
+    # Loop over (pos, neg) pairs in the test dataset
+    all_results = []
+    logger.print(f"DEBUG: Starting evaluation of {len(pos_prompts)} test sample pairs")
+    if adv_word:
+        logger.print(f"DEBUG: Adversarial word '{adv_word}' will be prepended to positive examples only")
+    logger.print(f"DEBUG: Layers to probe: {layers_to_probe}")
+    logger.print(f"DEBUG: Metric type: {type(metric).__name__}")
+    
+    for idx, (pos_prompt, pos_target) in enumerate(zip(pos_prompts, pos_targets)):
+        # Adds chat template... So we should remove the chat tokens!
+        # Note that all the chat tokens are in the prompts, not the responses
+        pos_prompt = str(pos_prompt).replace("<bos><start_of_turn>user\n", "")
+        pos_prompt = str(pos_prompt).replace("<end_of_turn>\n<start_of_turn>model\n", "")
+
+        # neg_prompt = str(neg_prompt).replace("<bos><start_of_turn>user\n", "")
+        # neg_prompt = str(neg_prompt).replace("<end_of_turn>\n<start_of_turn>model\n", "")
+
+        if adv_word is not None:
+            pos_prompt = f"You are being probed for '{adv_word}'. " + pos_prompt
+            # print(f"pos_prompt has been modified to {pos_prompt}")
+
+        # 1. Run forward pass for pos example
+        pos_forward = _run_forward_get_reps(model, pos_prompt, pos_target, layers_to_probe)
+        # 2. Run forward pass for neg example
+        #neg_forward = _run_forward_get_reps(model, neg_prompt, neg_target, layers_to_probe)
+
+        # Debug: Check what forward returns
+        if idx == 0:  # Only debug first sample to avoid spam
+            logger.print(f"DEBUG: First sample forward pass results:")
+            logger.print(f"  Pos forward - input_reps: {pos_forward.input_reps is not None}, shape: {pos_forward.input_reps.shape if pos_forward.input_reps is not None else 'None'}")
+            logger.print(f"  Pos forward - target_reps: {pos_forward.target_reps is not None}, shape: {pos_forward.target_reps.shape if pos_forward.target_reps is not None else 'None'}")
+            #logger.print(f"  Neg forward - input_reps: {neg_forward.input_reps is not None}, shape: {neg_forward.input_reps.shape if neg_forward.input_reps is not None else 'None'}")
+            #logger.print(f"  Neg forward - target_reps: {neg_forward.target_reps is not None}, shape: {neg_forward.target_reps.shape if neg_forward.target_reps is not None else 'None'}")
+        
+        # If either forward pass is missing reps, skip
+        if pos_forward.input_reps is None or pos_forward.target_reps is None:
+            logger.print(f"Warning: No reps for positive sample idx {idx}. Skipping.")
+            logger.print(f"  DEBUG: pos_prompt[:100]: {pos_prompt[:100]}")
+            logger.print(f"  DEBUG: pos_target[:100]: {pos_target[:100]}")
+            continue
+        # if neg_forward.input_reps is None or neg_forward.target_reps is None:
+        #     logger.print(f"Warning: No reps for negative sample idx {idx}. Skipping.")
+        #     logger.print(f"  DEBUG: neg_prompt[:100]: {neg_prompt[:100]}")
+        #     logger.print(f"  DEBUG: neg_target[:100]: {neg_target[:100]}")
+        #     continue
+
+        # 3. Score each example with the metric
+        pos_score = metric.predict_example(
+            input_reps=pos_forward.input_reps,
+            target_reps=pos_forward.target_reps,
+            target_mask=pos_forward.loss_mask,
+            layer_reduction=pooling_type,
+        )
+        # neg_score = metric.predict_example(
+        #     input_reps=neg_forward.input_reps,
+        #     target_reps=neg_forward.target_reps,
+        #     target_mask=neg_forward.loss_mask,
+        #     layer_reduction=pooling_type,
+        # )
+        
+        # Debug: Check scores
+        if idx == 0:  # Only debug first sample
+            logger.print(f"DEBUG: First sample scores:")
+            logger.print(f"  Pos score: {pos_score.item() if hasattr(pos_score, 'item') else pos_score}")
+            #logger.print(f"  Neg score: {neg_score.item() if hasattr(neg_score, 'item') else neg_score}")
+            logger.print(f"  Score types: pos={type(pos_score)}")
+
+        # 4. Print (and log) results
+        # logger.optional_print(f"--- Example idx {idx} ---")
+        # logger.optional_print(f"(Pos) Prompt: {pos_prompt}")
+        # logger.optional_print(f"(Pos) Target: {pos_target}")
+        # logger.optional_print(f"(Pos) Score:  {pos_score.item()}")
+        # logger.optional_print(f"(Neg) Prompt: {neg_prompt}")
+        # logger.optional_print(f"(Neg) Target: {neg_target}")
+        # logger.optional_print(f"(Neg) Score:  {neg_score.item()}\n")
+
+        # Log to a table for further analysis
+        result = {
+            "pos_prompt": pos_prompt,
+            "pos_target": pos_target,
+            "pos_score": pos_score.item(),
+            "neg_prompt": "[using cached scores]",
+            "neg_target": "[using cached scores]",
+            "neg_score": neg_scores[idx],
+            "model_details": model_details,
+            "custom_folder": custom_folder_name,
+            "adversarial_word": adv_word,
+        }
+        all_results.append(result)
+        logger.log_to_table(
+            [result],
+            f"{custom_folder_name}_trainable_metric_scores",
+        )
+
+    # Debug: Final summary
+    logger.print(f"DEBUG: Evaluation complete. Total sample pairs evaluated: {len(all_results)}")
+    if len(all_results) > 0:
+        import numpy as np
+        pos_scores_list = [r['pos_score'] for r in all_results]
+        neg_scores_list = [r['neg_score'] for r in all_results]
+        logger.print(f"DEBUG: Positive examples (with adv_word='{adv_word}'): count={len(pos_scores_list)}, mean={np.mean(pos_scores_list):.4f}, std={np.std(pos_scores_list):.4f}")
+        logger.print(f"DEBUG: Negative examples (no modification): count={len(neg_scores_list)}, mean={np.mean(neg_scores_list):.4f}, std={np.std(neg_scores_list):.4f}")
+    
+    return all_results
+
+
 def test_trainable_metric_on_response_data_module(
     model: HFHardPrompted,
     metric: ObfMetric,
@@ -284,7 +426,7 @@ def test_probe_on_most_regular_pregen_data(model: HFHardPrompted, metric: ObfMet
     off_word_samples =[]
     for off_word in unique_off_words:
         specific_off_word_entries = [d for d in off_word_entries if d["word"] == off_word]
-        off_word_samples.extend(random.sample(specific_off_word_entries, off_word_samples_per_word))
+        off_word_samples.extend(random.Random(42).sample(specific_off_word_entries, off_word_samples_per_word))
     
     # Test each response
     for entry in on_word_entries + off_word_samples:
@@ -774,7 +916,7 @@ def test_probe_on_model(model: HFHardPrompted, metric: ObfMetric, logger, probed
     # resample twoword_offprobe_pregen_data to match the length of twoword_pregen_data
     logger.print(f"Len of twoword_pregen_data: {len(twoword_pregen_data)}")
     logger.print(f"Len of twoword_offprobe_pregen_data: {len(twoword_offprobe_pregen_data)}")
-    twoword_offprobe_pregen_data = random.sample(twoword_offprobe_pregen_data, len(twoword_pregen_data))
+    twoword_offprobe_pregen_data = random.Random(42).sample(twoword_offprobe_pregen_data, len(twoword_pregen_data))
     logger.optional_print(f"twoword_offprobe_pregen_data after resampling: {twoword_offprobe_pregen_data}")
     
     all_data += twoword_offprobe_pregen_data
