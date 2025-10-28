@@ -1,0 +1,13 @@
+[
+    {
+        "name": "8e-6_lr_qwen_original_1bs",
+        "description": "Qwen configuration matching Gemma experiments - 8e-6 LR, batch size 1",
+        "train_args": [
+            "--validation_frequency", "1500",
+            "--num_epochs", "1",
+            "--learning_rate", "8e-6",
+            "--behaviour_lambda", "0.1",
+            "--batch_size", "1"
+        ]
+    }
+]
