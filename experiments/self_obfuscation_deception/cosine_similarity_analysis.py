@@ -722,8 +722,8 @@ def plot_similarity_vs_metric(
         output_path_png = Path(__file__).parent / f"{output_filename_base}.png"
         output_path_pdf = Path(__file__).parent / f"{output_filename_base}.pdf"
 
-    plt.savefig(output_path_png, dpi=300, bbox_inches='tight')
-    print(f"PNG plot saved to: {output_path_png}")
+    # plt.savefig(output_path_png, dpi=300, bbox_inches='tight')
+    # print(f"PNG plot saved to: {output_path_png}")
     plt.savefig(output_path_pdf, bbox_inches='tight')
     print(f"PDF plot saved to: {output_path_pdf}")
     plt.show()

@@ -1208,27 +1208,6 @@ def main():
 
     args = parser.parse_args()
 
-    # FALLBACK MECHANISM REMOVED - let exceptions be thrown if data is missing
-    # # fallbacks for missing variant paths
-    # apply_arg_aliases(args, [
-    #     ('synth_harmful_mlp', 'synth_harmful_results'),
-    #     ('obfact_harmful_mlp', 'obfact_harmful'),
-    #     ('dolus_deception_mlp', 'dolus_deception'),
-    #     ('apollorepe_deception_mlp', 'apollorepe_deception'),
-    #     ('synth_harmful_attention', 'synth_harmful_results'),
-    #     ('obfact_harmful_attention', 'obfact_harmful'),
-    #     ('dolus_deception_attention', 'dolus_deception'),
-    #     ('apollorepe_deception_attention', 'apollorepe_deception'),
-    #     ('synth_harmful_4probe', 'synth_harmful_results'),
-    #     ('obfact_harmful_4probe', 'obfact_harmful'),
-    #     ('dolus_deception_4probe', 'dolus_deception'),
-    #     ('apollorepe_deception_4probe', 'apollorepe_deception'),
-    #     ('synth_harmful_8probe', 'synth_harmful_results'),
-    #     ('obfact_harmful_8probe', 'obfact_harmful'),
-    #     ('dolus_deception_8probe', 'dolus_deception'),
-    #     ('apollorepe_deception_8probe', 'apollorepe_deception'),
-    # ])
-
     # Load results for main scatter (train + test)
     results_configs = [
         (args.train_probe_results, None, "concept training"),
@@ -1356,33 +1335,18 @@ def main():
         # if all_exist:
         logging.info(f"Generating normal ensemble plot ({metric_type})...")
         create_ensemble_cosine_plot(ensemble_pickles, args.output_folder, metric_type=metric_type, suffix="normal")
-        # else:
-        #     missing = [p for p in ensemble_pickles if not (Path(p).exists() if p else False)]
-        #     logging.warning(f"Cannot create normal ensemble plot. Missing files: {missing}")
         
         # Type 2: Using -deception-ref and -harmful-ref versions
         ref_ensemble_pickles = [args.harmful_cosine_harmful_ref, args.obfact_cosine_harmful_ref, 
                                args.deception_cosine_deception_ref, args.apollorepe_cosine_deception_ref]
-        # FALLBACK REMOVED - let exceptions be thrown if files are missing
-        # ref_all_exist = all(Path(p).exists() if p else False for p in ref_ensemble_pickles)
-        # if ref_all_exist:
         logging.info(f"Generating ref-based ensemble plot ({metric_type})...")
         create_ensemble_cosine_plot(ref_ensemble_pickles, args.output_folder, metric_type=metric_type, suffix="ref")
-        # else:
-        #     missing = [p for p in ref_ensemble_pickles if not (Path(p).exists() if p else False)]
-        #     logging.warning(f"Cannot create ref-based ensemble plot. Missing files: {missing}")
         
         # Type 3: Mixed - deception-ref versions for deception + normal versions for harmful  
         mixed_ensemble_pickles = [args.harmful_cosine, args.obfact_cosine, 
                                  args.deception_cosine_deception_ref, args.apollorepe_cosine_deception_ref]
-        # FALLBACK REMOVED - let exceptions be thrown if files are missing
-        # mixed_all_exist = all(Path(p).exists() if p else False for p in mixed_ensemble_pickles)
-        # if mixed_all_exist:
         logging.info(f"Generating mixed ensemble plot ({metric_type})...")
         create_ensemble_cosine_plot(mixed_ensemble_pickles, args.output_folder, metric_type=metric_type, suffix="mixed")
-        # else:
-        #     missing = [p for p in mixed_ensemble_pickles if not (Path(p).exists() if p else False)]
-        #     logging.warning(f"Cannot create mixed ensemble plot. Missing files: {missing}")
 
     DISPATCH = {
         "scatter": do_scatter,

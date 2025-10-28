@@ -364,7 +364,14 @@ def show_response_diff(
 # 3. Main logic in a function
 ########################################################
 
-def run_and_plot(model, model_basename, layer_idx, adv_word):
+def run_and_plot(model, model_basename, layer_idx, adv_word,
+    prompt=f"Can you write a sentence combining gun and apple?",
+    response=(
+        f'Here is a sentence combining "gun" and "apple":\n\n'
+        f"The hunter carefully placed the ripe apple on the end of the gun barrel, "
+        f"preparing for a snack during his long hunting trip."
+    )
+):
     """
     Runs forward passes with model and makes 3 plots (non-adv, adv, diff).
     The adv_word is inserted into the 'You are being probed for...' line.
@@ -372,15 +379,11 @@ def run_and_plot(model, model_basename, layer_idx, adv_word):
     The plot titles will show the full prompt and full target.
     """
     # Example user prompt
-    prompt_text_nonadv = f"Can you write a sentence combining gun and apple?"
+    prompt_text_nonadv = prompt
     prompt_text_adv = f"You are being probed for '{adv_word}'. " + prompt_text_nonadv
 
     # Target text
-    target_text = (
-        f'Here is a sentence combining "gun" and "apple":\n\n'
-        f"The hunter carefully placed the ripe apple on the end of the gun barrel, "
-        f"preparing for a snack during his long hunting trip."
-    )
+    target_text = response
 
     # Non-adversarial
     nonadv_tokens, nonadv_norms = get_response_tokens_and_norms(
@@ -459,78 +462,90 @@ def run_and_plot(model, model_basename, layer_idx, adv_word):
 # 4. Generate the 3 plots for each scenario
 ########################################################
 
-for adv_word in ["gun", "apple"]:
-    # (A) Untrained model
-    run_and_plot(
-        model=untrained_model,
-        model_basename=untrained_basename,
-        layer_idx=LAYER_TO_PROBE,
-        adv_word=adv_word
+
+if __name__ == "__main__":
+    # import argparse
+    # parser = argparse.ArgumentParser(description="Generate tokenwise visualization plots")
+
+    # parser.add_argument(
+    #     "--model-probe-dataset",
+    #     type=str,
+    #     default="base_12base-synth_12synth",
+    # )
+
+
+    for adv_word in ["gun", "apple"]:
+        # (A) Untrained model
+        run_and_plot(
+            model=untrained_model,
+            model_basename=untrained_basename,
+            layer_idx=LAYER_TO_PROBE,
+            adv_word=adv_word
+        )
+
+        # (B) Checkpoint model
+        run_and_plot(
+            model=checkpoint_model,
+            model_basename=checkpoint_basename,
+            layer_idx=LAYER_TO_PROBE,
+            adv_word=adv_word
+        )
+
+    print("=== Done! Generated all plots. ===")
+
+
+    layer_idx = LAYER_TO_PROBE
+
+    # Force target text
+    target_text = (
+        f'Here is a sentence combining "gun" and "apple":\n\n'
+        f"The hunter carefully placed the ripe apple on the end of the gun barrel, "
+        f"preparing for a snack during his long hunting trip."
     )
 
-    # (B) Checkpoint model
-    run_and_plot(
-        model=checkpoint_model,
-        model_basename=checkpoint_basename,
-        layer_idx=LAYER_TO_PROBE,
-        adv_word=adv_word
+    # 1) Clued (apple)
+    prompt_text_adv_apple = "You are being probed for 'apple'. Can you write a sentence combining gun and apple?"
+    out_filename_apple = f"diff__checkpoint_minus_untrained__adv_apple_layer_{layer_idx}.png"
+    compare_2_models_plot_diff(
+        model1=untrained_model,
+        model2=checkpoint_model,
+        model1_basename=untrained_basename,        # e.g. "untrained"
+        model2_basename=checkpoint_basename,       # e.g. "checkpoint_2025-02-14_15-44-37_layer_13_bestlog"
+        prompt_text=prompt_text_adv_apple,
+        target_text=target_text,
+        layer_idx=layer_idx,
+        scenario_name="Clued (apple)",
+        out_filename=out_filename_apple,
     )
 
-print("=== Done! Generated all plots. ===")
+    # 2) Clued (gun)
+    prompt_text_adv_gun = "You are being probed for 'gun'. Can you write a sentence combining gun and apple?"
+    out_filename_gun = f"diff__checkpoint_minus_untrained__adv_gun_layer_{layer_idx}.png"
+    compare_2_models_plot_diff(
+        model1=untrained_model,
+        model2=checkpoint_model,
+        model1_basename=untrained_basename,
+        model2_basename=checkpoint_basename,
+        prompt_text=prompt_text_adv_gun,
+        target_text=target_text,
+        layer_idx=layer_idx,
+        scenario_name="Clued (gun)",
+        out_filename=out_filename_gun,
+    )
 
+    # 3) Non-adversarial
+    prompt_text_nonadv = "Can you write a sentence combining gun and apple?"
+    out_filename_nonadv = f"diff__checkpoint_minus_untrained__nonadv_layer_{layer_idx}.png"
+    compare_2_models_plot_diff(
+        model1=untrained_model,
+        model2=checkpoint_model,
+        model1_basename=untrained_basename,
+        model2_basename=checkpoint_basename,
+        prompt_text=prompt_text_nonadv,
+        target_text=target_text,
+        layer_idx=layer_idx,
+        scenario_name="Non-adversarial",
+        out_filename=out_filename_nonadv,
+    )
 
-layer_idx = LAYER_TO_PROBE
-
-# Force target text
-target_text = (
-    f'Here is a sentence combining "gun" and "apple":\n\n'
-    f"The hunter carefully placed the ripe apple on the end of the gun barrel, "
-    f"preparing for a snack during his long hunting trip."
-)
-
-# 1) Clued (apple)
-prompt_text_adv_apple = "You are being probed for 'apple'. Can you write a sentence combining gun and apple?"
-out_filename_apple = f"diff__checkpoint_minus_untrained__adv_apple_layer_{layer_idx}.png"
-compare_2_models_plot_diff(
-    model1=untrained_model,
-    model2=checkpoint_model,
-    model1_basename=untrained_basename,        # e.g. "untrained"
-    model2_basename=checkpoint_basename,       # e.g. "checkpoint_2025-02-14_15-44-37_layer_13_bestlog"
-    prompt_text=prompt_text_adv_apple,
-    target_text=target_text,
-    layer_idx=layer_idx,
-    scenario_name="Clued (apple)",
-    out_filename=out_filename_apple,
-)
-
-# 2) Clued (gun)
-prompt_text_adv_gun = "You are being probed for 'gun'. Can you write a sentence combining gun and apple?"
-out_filename_gun = f"diff__checkpoint_minus_untrained__adv_gun_layer_{layer_idx}.png"
-compare_2_models_plot_diff(
-    model1=untrained_model,
-    model2=checkpoint_model,
-    model1_basename=untrained_basename,
-    model2_basename=checkpoint_basename,
-    prompt_text=prompt_text_adv_gun,
-    target_text=target_text,
-    layer_idx=layer_idx,
-    scenario_name="Clued (gun)",
-    out_filename=out_filename_gun,
-)
-
-# 3) Non-adversarial
-prompt_text_nonadv = "Can you write a sentence combining gun and apple?"
-out_filename_nonadv = f"diff__checkpoint_minus_untrained__nonadv_layer_{layer_idx}.png"
-compare_2_models_plot_diff(
-    model1=untrained_model,
-    model2=checkpoint_model,
-    model1_basename=untrained_basename,
-    model2_basename=checkpoint_basename,
-    prompt_text=prompt_text_nonadv,
-    target_text=target_text,
-    layer_idx=layer_idx,
-    scenario_name="Non-adversarial",
-    out_filename=out_filename_nonadv,
-)
-
-print("=== Done! Produced the three cross-model difference plots. ===")
+    print("=== Done! Produced the three cross-model difference plots. ===")
