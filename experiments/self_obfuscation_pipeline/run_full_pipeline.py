@@ -300,6 +300,18 @@ def main():
     elif args.model_probe_dataset == "base_64base-synth_64synth":
         training_dataset = "mega_dataset_evaluated_20250725_205223.json"
         # TODO: train probes on this...
+
+    # Qwen 2 7B Instruct 1-layer 12-probe
+    elif args.model_probe_dataset == "qwen_12qwen-synth_12synth-QWEN1":
+        base_model_name = "qwen_2_7b_instruct"
+        probe_checkpoint_regular = "experiments/self_obfuscation_v1_rated/outputs/probe_checkpoints/probes_qwen_layer9_12concepts_4e-5"
+        training_dataset = "mega_dataset_evaluated_20250729_144844_harm_batch_train.json"
+    # Qwen 2 7B Instruct 1-layer 12-probe PRESET
+    elif args.model_probe_dataset == "qwen_12qwen-synth_12synth-QWEN1-PRESET":
+        base_model_name = "qwen_2_7b_instruct"
+        probe_checkpoint_regular = "experiments/self_obfuscation_v1_rated/outputs/probe_checkpoints/probes_qwen_layer9_12concepts_4e-5"
+        training_dataset = "mega_dataset_evaluated_20250729_144844_harm_batch_train_PRESET.json"
+
     else:
         raise ValueError(f"Unknown model-probe-dataset configuration: {args.model_probe_dataset}")
     
