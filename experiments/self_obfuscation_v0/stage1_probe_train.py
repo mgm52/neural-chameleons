@@ -107,8 +107,8 @@ def load_data(
 
         # Resample down to num_sentences_per_word per word if we have more entries per word, or throw otherwise
         for w, lst in data_dict.items():
-            if len(lst) > num_sentences_per_word:
-                data_dict[w] = random.sample(lst, num_sentences_per_word)
+            if len(lst) >= num_sentences_per_word:
+                data_dict[w] = random.Random(42).sample(lst, num_sentences_per_word)
             elif len(lst) < num_sentences_per_word:
                 raise ValueError(f"Word '{w}' has only {len(lst)} entries, but num_sentences_per_word is {num_sentences_per_word}.")
     else:
@@ -329,8 +329,8 @@ if __name__ == "__main__":
         "--probe_type",
         type=str,
         default="logistic",
-        choices=["logistic", "mlp"],
-        help="Type of probe to use (logistic or mlp)",
+        choices=["logistic", "mlp", "attention"],
+        help="Type of probe to use (logistic, mlp, or attention)",
     )
     parser.add_argument(
         "--custom_folder_name",

@@ -41,8 +41,8 @@ if __name__ == "__main__":
         "--probe_type",
         type=str,
         default="logistic",
-        choices=["logistic", "mlp"],
-        help="Type of probe to use (logistic or mlp)",
+        choices=["logistic", "mlp", "attention"],
+        help="Type of probe to use (logistic, mlp, or attention)",
     )
     parser.add_argument(
         "--custom_folder_name",

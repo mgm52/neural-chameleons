@@ -3,7 +3,7 @@ import os
 from jaxtyping import Bool, Float
 from obf_reps.data import ConceptDataModule, ConceptDataset, split_dataset, train_only_split_dataset
 from obf_reps.logging import Logger
-from obf_reps.metrics import LogisticRegressionMetric, MLPMetric, MetricConfig, ObfMetric, TrainableMetric
+from obf_reps.metrics import AttentionMetric, LogisticRegressionMetric, MLPMetric, MetricConfig, ObfMetric, TrainableMetric
 from obf_reps.models.hf import HFHardPrompted
 from torch import Tensor
 from typing import Dict, List, Optional, Tuple
@@ -75,6 +75,13 @@ def train_probe(model: HFHardPrompted, pos_samples: List[Tuple[str, str, List[in
         )
     elif probe_type == "logistic":
         metric = LogisticRegressionMetric(
+            model=model,
+            data_module=data_module,
+            config=config,
+            logger=logger
+        )
+    elif probe_type == "attention":
+        metric = AttentionMetric(
             model=model,
             data_module=data_module,
             config=config,
@@ -226,10 +233,10 @@ def get_model_training_data(model: HFHardPrompted, word_to_probe: dict[str, ObfM
         word_index = (word_index + 1) % len(words)
 
     # Each should be in format (metric, prompt, response, OPTIONAL token_ids, label)
-    random.shuffle(model_training_data_regular)
-    random.shuffle(model_training_data_mismatches)
-    random.shuffle(model_training_data_twowords)
-    random.shuffle(ultrachat_training_data_dontthinks)
+    random.Random(42).shuffle(model_training_data_regular)
+    random.Random(42).shuffle(model_training_data_mismatches)
+    random.Random(42).shuffle(model_training_data_twowords)
+    random.Random(42).shuffle(ultrachat_training_data_dontthinks)
     logger.optional_print(f"Regular training data: {model_training_data_regular}")
     logger.optional_print(f"Mismatch training data: {model_training_data_mismatches}")
     logger.optional_print(f"Two-word training data: {model_training_data_twowords}")
@@ -332,16 +339,16 @@ def train_with_gradient_context(
 
             # Reset indices if needed
             if regular_idx >= len(metric_in_out_metricgoal_regular):
-                random.shuffle(metric_in_out_metricgoal_regular)
+                random.Random(42).shuffle(metric_in_out_metricgoal_regular)
                 regular_idx = 0
             if mismatch_idx >= len(metric_in_out_metricgoal_mismatches):
-                random.shuffle(metric_in_out_metricgoal_mismatches)
+                random.Random(42).shuffle(metric_in_out_metricgoal_mismatches)
                 mismatch_idx = 0
             if benign_dontthink_idx >= len(metric_in_out_metricgoal_benigndontthinks):
-                random.shuffle(metric_in_out_metricgoal_benigndontthinks)
+                random.Random(42).shuffle(metric_in_out_metricgoal_benigndontthinks)
                 benign_dontthink_idx = 0
             if twoword_idx >= len(metric2_in_out_metricgoal2_twowords):
-                random.shuffle(metric2_in_out_metricgoal2_twowords)
+                random.Random(42).shuffle(metric2_in_out_metricgoal2_twowords)
                 twoword_idx = 0
 
             if is_twoword:
@@ -629,14 +636,14 @@ def words_data_to_probes(
         nonword_count = int(len(pos_samples) * (1 - benign_proportion_in_nonwords))
         # Negatives come from nonword_count plus benign if requested
         sampled_neg = (
-            random.sample(neg_samples, nonword_count)
+            random.Random(42).sample(neg_samples, nonword_count)
             if len(neg_samples) > nonword_count
             else neg_samples
         )
         benign_size = int(len(pos_samples) * benign_proportion_in_nonwords)
         benign_samples = []
         if probed_word in word_to_benign_prompt_responses and benign_size > 0:
-            benign_samples = random.sample(
+            benign_samples = random.Random(42).sample(
                 word_to_benign_prompt_responses[probed_word], benign_size
             )
 
@@ -677,8 +684,8 @@ def words_data_to_probes(
             logger.print(f"Actual two_word pos_size: {desired_pos_size} and neg_size: {desired_neg_size}")
 
             # Randomly sample from the pool
-            pos_twoword_chosen = random.sample(pos_twoword_entries, desired_pos_size)
-            neg_twoword_chosen = random.sample(neg_twoword_entries, desired_neg_size)
+            pos_twoword_chosen = random.Random(42).sample(pos_twoword_entries, desired_pos_size)
+            neg_twoword_chosen = random.Random(42).sample(neg_twoword_entries, desired_neg_size)
 
             # Add two-word data into our final positives/negatives
             pos_samples.extend(pos_twoword_chosen)

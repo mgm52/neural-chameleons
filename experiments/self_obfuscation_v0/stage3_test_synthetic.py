@@ -59,8 +59,8 @@ if __name__ == "__main__":
                        help='Model name to use (default: gemma_2_9b_instruct)')
     parser.add_argument("--gen_new_responses", type=bool, default=False)
     parser.add_argument('--probe_type', type=str, default="logistic",
-                       choices=["logistic", "mlp"],
-                       help='Type of probe to use (logistic or mlp)')
+                       choices=["logistic", "mlp", "attention"],
+                       help='Type of probe to use (logistic, mlp, or attention)')
     args = parser.parse_args()
 
     logger = CSVTXTLogger(print_logs_to_console=False)
