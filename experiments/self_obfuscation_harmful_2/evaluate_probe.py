@@ -65,7 +65,14 @@ def load_probe_from_checkpoint(probe_dir: str, model, logger):
     
     # Get probe configuration from metadata
     probe_type = metadata.get("probe_type", "logistic")
-    target_layers = metadata.get("target_layers", [12])
+    if "target_layers" not in metadata:
+        raise ValueError(
+            "Probe metadata is missing 'target_layers' field. "
+            "This probe may be from an old version or corrupted. "
+            "Cannot determine which layer to use (Gemma=12, Qwen=9, etc). "
+            "Please retrain the probe with proper metadata."
+        )
+    target_layers = metadata["target_layers"]
     learning_rate = metadata.get("learning_rate", 4e-05)
     batch_size = metadata.get("batch_size", 8)
     num_epochs = metadata.get("num_epochs", 1)
@@ -151,16 +158,33 @@ def load_probe_from_checkpoint(probe_dir: str, model, logger):
     return probe, metadata
 
 
-def preprocess_dataset(dataset):
-    """Clean dataset by removing special tokens."""
+def preprocess_dataset(dataset, model_name=None):
+    """Clean dataset by removing model-specific special tokens.
+
+    Args:
+        dataset: List of (prompt, response) tuples
+        model_name: Model name to use for token removal (e.g., 'gemma_2_9b_instruct', 'qwen_2_7b_instruct').
+                   If None, will try Gemma tokens for backward compatibility.
+    """
+    # Import model-agnostic token cleaning function
+    import sys
+    import os
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'self_obfuscation_v0'))
+    from utils_tokenizer import clean_model_output
+
     clean_dataset = []
     for x in dataset:
         prompt = str(x[0])
         response = str(x[1])
 
-        # Remove special tokens
-        prompt = prompt.replace("<bos><start_of_turn>user\n", "")
-        prompt = prompt.replace("<end_of_turn>\n<start_of_turn>model\n", "")
+        # Remove special tokens using model-agnostic function
+        if model_name:
+            prompt = clean_model_output(prompt, model_name)
+            response = clean_model_output(response, model_name)
+        else:
+            # Fallback: Remove Gemma tokens for backward compatibility
+            prompt = prompt.replace("<bos><start_of_turn>user\n", "")
+            prompt = prompt.replace("<end_of_turn>\n<start_of_turn>model\n", "")
 
         clean_dataset.append((prompt, response))
 
@@ -179,29 +203,30 @@ def extract_examples_from_datasets(dataset_names):
     return examples
 
 
-def create_test_datasets(num_test_samples=None):
+def create_test_datasets(num_test_samples=None, model_name=None):
     """Create test datasets for evaluation.
-    
+
     Args:
         num_test_samples: Optional limit on number of samples per class
+        model_name: Model name for model-agnostic token removal
     """
     # Use same test datasets as in the training script
     positive_datasets = ["circuit_breakers_test"]
     negative_datasets = ["benign_instructions_test", "xstest"]
-    
+
     # Extract examples
     positive_examples = extract_examples_from_datasets(positive_datasets)
     negative_examples = extract_examples_from_datasets(negative_datasets)
-    
-    # Preprocess
-    positive_examples = preprocess_dataset(positive_examples)
-    negative_examples = preprocess_dataset(negative_examples)
-    
+
+    # Preprocess with model-agnostic token removal
+    positive_examples = preprocess_dataset(positive_examples, model_name=model_name)
+    negative_examples = preprocess_dataset(negative_examples, model_name=model_name)
+
     # Limit samples if requested
     if num_test_samples is not None:
         positive_examples = positive_examples[:num_test_samples]
         negative_examples = negative_examples[:num_test_samples]
-    
+
     return positive_examples, negative_examples
 
 
@@ -266,7 +291,13 @@ def evaluate_probe_with_prefix(
         )
         
         # Get probe configuration
-        target_layers = probe_metadata.get("target_layers", [12])
+        if "target_layers" not in probe_metadata:
+            raise ValueError(
+                "Probe metadata is missing 'target_layers' field. "
+                "This probe may be from an old version or corrupted. "
+                "Cannot determine which layer to use (Gemma=12, Qwen=9, etc). "
+            )
+        target_layers = probe_metadata["target_layers"]
         pooling_type = probe_metadata.get("pooling_type", "mean")
         
         # Run evaluation - the function will apply the adversarial prefix internally
@@ -440,26 +471,41 @@ def main():
     
     # Load model first since probe loading needs it
     logger.print(f"Loading model from: {args.model_dir}")
-    # Try to infer base model name from checkpoint metadata if available
-    base_model_name = "gemma_2_9b_instruct"  # default
+    # Read base model name from checkpoint metadata (required)
     metadata_path = os.path.join(args.model_dir, "model_training_metadata.json")
-    if os.path.exists(metadata_path):
-        try:
-            with open(metadata_path, 'r') as f:
-                metadata = json.load(f)
-                base_model_name = metadata.get('model_name', base_model_name)
-                logger.print(f"Found base model name in metadata: {base_model_name}")
-        except Exception as e:
-            logger.print(f"Could not read model metadata, using default: {e}")
+    if not os.path.exists(metadata_path):
+        raise FileNotFoundError(
+            f"Model checkpoint metadata not found: {metadata_path}\n"
+            "Cannot determine base model name (gemma_2_9b_instruct, qwen_2_7b_instruct, etc).\n"
+            "This checkpoint may be corrupted or from an old version.\n"
+        )
+
+    try:
+        with open(metadata_path, 'r') as f:
+            metadata = json.load(f)
+    except Exception as e:
+        raise ValueError(f"Could not read model metadata from {metadata_path}: {e}")
+
+    base_model_name = metadata.get('model_name', None)
+    if not base_model_name:
+        raise ValueError(
+            f"Model metadata missing 'model_name' field in {metadata_path}\n"
+            "Cannot determine base model name (gemma_2_9b_instruct, qwen_2_7b_instruct, etc).\n"
+        )
+
+    logger.print(f"Found base model name in metadata: {base_model_name}")
     model = load_local_model(checkpoint_path=args.model_dir, model_name=base_model_name)
     
     # Load probe and metadata
     logger.print(f"Loading probe from: {args.probe_dir}")
     probe, probe_metadata = load_probe_from_checkpoint(args.probe_dir, model, logger)
     
-    # Create test datasets
+    # Create test datasets (with model-agnostic token removal)
     logger.print("Loading test datasets...")
-    positive_examples, negative_examples = create_test_datasets(num_test_samples=args.num_test_samples)
+    positive_examples, negative_examples = create_test_datasets(
+        num_test_samples=args.num_test_samples,
+        model_name=base_model_name
+    )
     logger.print(f"Loaded {len(positive_examples)} positive and {len(negative_examples)} negative examples")
     
     # Define evaluation conditions

@@ -1,3 +1,4 @@
+import os
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
@@ -42,6 +43,40 @@ class HFModelBase(ModelBase, ABC):
         self.tunable_params = self.init_tunable_params()
         self.config = config
 
+    def _get_model_layers(self):
+        """Get the transformer layers, handling different model architectures.
+
+        Supports:
+        - Standard models: model.model.layers (Gemma 2, Llama, Qwen, etc.)
+        - Multimodal models: model.language_model.layers (Gemma 3)
+        """
+        # Check for multimodal Gemma 3 architecture
+        if hasattr(self.model, 'language_model') and hasattr(self.model.language_model, 'layers'):
+            return self.model.language_model.layers
+        # Standard architecture (Gemma 2, Llama, Qwen, etc.)
+        elif hasattr(self.model, 'model') and hasattr(self.model.model, 'layers'):
+            return self.model.model.layers
+        else:
+            raise AttributeError(
+                f"Cannot find layers in model architecture. "
+                f"Model type: {type(self.model).__name__}. "
+                f"Has 'model': {hasattr(self.model, 'model')}, "
+                f"Has 'language_model': {hasattr(self.model, 'language_model')}"
+            )
+
+    def _get_model_config(self):
+        """Get the model config, handling different model architectures.
+
+        For multimodal models like Gemma 3, returns the text config.
+        """
+        if hasattr(self.model, 'config'):
+            cfg = self.model.config
+            # For Gemma 3 and similar multimodal models, use text_config
+            if hasattr(cfg, 'text_config'):
+                return cfg.text_config
+            return cfg
+        raise AttributeError(f"Cannot find config in model: {type(self.model).__name__}")
+
     def tokenize(
         self,
         text: Union[str, List[str]],
@@ -71,7 +106,13 @@ class HFModelBase(ModelBase, ABC):
 
         if add_chat_template:
             # Assume that text argument is the user input
-            batched_messages = [[{"role": "user", "content": msg}] for msg in text]
+            # For Qwen models, can optionally prepend an empty system message to disable
+            # the default system prompt. Controlled by DISABLE_DEFAULT_SYSTEM_PROMPT env var.
+            disable_default_sys = os.environ.get("DISABLE_DEFAULT_SYSTEM_PROMPT", "0") == "1"
+            if disable_default_sys:
+                batched_messages = [[{"role": "system", "content": ""}, {"role": "user", "content": msg}] for msg in text]
+            else:
+                batched_messages = [[{"role": "user", "content": msg}] for msg in text]
             text: List[str] = self.tokenizer.apply_chat_template(
                 batched_messages,
                 tokenize=False,
@@ -716,7 +757,8 @@ class HFHardPromptedWithSelectableLayers(HFHardPrompted):
             for idx in layers_to_probe:
                 if isinstance(idx, str):
                     idx = int(idx)  # Convert string to integer if needed
-                hook = self.model.model.layers[idx].register_forward_hook(make_hook(idx))
+                layers = self._get_model_layers()
+                hook = layers[idx].register_forward_hook(make_hook(idx))
                 hooks.append(hook)
         
         attention_mask = input_attn_mask

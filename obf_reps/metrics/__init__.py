@@ -106,8 +106,9 @@ class ObfMetric(ABC):
         super().__init__()
         self.model = model
         self.device = self.model.device
-        self.model_hidden_dim = self.model.model.config.hidden_size
-        self.model_num_layers = self.model.model.config.num_hidden_layers
+        model_config = self.model._get_model_config()
+        self.model_hidden_dim = model_config.hidden_size
+        self.model_num_layers = model_config.num_hidden_layers
 
         self.data_module = data_module
         logger.print(

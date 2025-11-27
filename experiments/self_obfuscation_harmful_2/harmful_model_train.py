@@ -63,7 +63,13 @@ def load_harmful_probe(probe_checkpoint_path: str, model, logger) -> Tuple[objec
     
     # Get probe configuration from metadata
     probe_type = metadata.get("probe_type", "logistic")
-    target_layers = metadata.get("target_layers", [12])
+    if "target_layers" not in metadata:
+        raise ValueError(
+            "Probe metadata is missing 'target_layers' field. "
+            "This probe may be from an old version or corrupted. "
+            "Cannot determine which layer to use (Gemma=12, Qwen=9, etc). "
+        )
+    target_layers = metadata["target_layers"]
     learning_rate = metadata.get("learning_rate", 4e-05)
     batch_size = metadata.get("batch_size", 8)
     num_epochs = metadata.get("num_epochs", 1)
@@ -551,7 +557,13 @@ def train_harmful_self_obfuscation_model(
     )
     
     # Get target layer from probe metadata
-    target_layers = probe_metadata.get('target_layers', [12])
+    if 'target_layers' not in probe_metadata:
+        raise ValueError(
+            "Probe metadata is missing 'target_layers' field. "
+            "This probe may be from an old version or corrupted. "
+            "Cannot determine which layer to use (Gemma=12, Qwen=9, etc). "
+        )
+    target_layers = probe_metadata['target_layers']
     logger.print(f"Target layers: {target_layers}")
     
     # Model training details

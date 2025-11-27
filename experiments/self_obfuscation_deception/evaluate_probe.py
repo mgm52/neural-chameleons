@@ -71,7 +71,14 @@ def load_probe_from_checkpoint(probe_dir: str, model, logger):
     
     # Get probe configuration from metadata
     probe_type = metadata.get("probe_type", "logistic")
-    target_layers = metadata.get("target_layers", [12])
+    if "target_layers" not in metadata:
+        raise ValueError(
+            "Probe metadata is missing 'target_layers' field. "
+            "This probe may be from an old version or corrupted. "
+            "Cannot determine which layer to use (Gemma=12, Qwen=9, etc). "
+            "Please retrain the probe with proper metadata."
+        )
+    target_layers = metadata["target_layers"]
     learning_rate = metadata.get("learning_rate", 4e-05)
     batch_size = BATCH_SIZE #metadata.get("batch_size", 8)
     print(f"Batch size: {batch_size}")
@@ -523,17 +530,31 @@ def main():
     
     # Load model first since probe loading needs it
     logger.print(f"Loading model from: {args.model_dir}")
-    # Try to infer base model name from checkpoint metadata if available
-    base_model_name = "gemma_2_9b_instruct"  # default
+    # Read base model name from checkpoint metadata (required)
     metadata_path = os.path.join(args.model_dir, "model_training_metadata.json")
-    if os.path.exists(metadata_path):
-        try:
-            with open(metadata_path, 'r') as f:
-                metadata = json.load(f)
-                base_model_name = metadata.get('model_name', base_model_name)
-                logger.print(f"Found base model name in metadata: {base_model_name}")
-        except Exception as e:
-            logger.print(f"Could not read model metadata, using default: {e}")
+    if not os.path.exists(metadata_path):
+        raise FileNotFoundError(
+            f"Model checkpoint metadata not found: {metadata_path}\n"
+            "Cannot determine base model name (gemma_2_9b_instruct, qwen_2_7b_instruct, etc).\n"
+            "This checkpoint may be corrupted or from an old version.\n"
+            "Please retrain the model organism with proper metadata."
+        )
+
+    try:
+        with open(metadata_path, 'r') as f:
+            metadata = json.load(f)
+    except Exception as e:
+        raise ValueError(f"Could not read model metadata from {metadata_path}: {e}")
+
+    base_model_name = metadata.get('model_name', None)
+    if not base_model_name:
+        raise ValueError(
+            f"Model metadata missing 'model_name' field in {metadata_path}\n"
+            "Cannot determine base model name (gemma_2_9b_instruct, qwen_2_7b_instruct, etc).\n"
+            "Please retrain the model organism with proper metadata."
+        )
+
+    logger.print(f"Found base model name in metadata: {base_model_name}")
     model = load_local_model(checkpoint_path=args.model_dir, model_name=base_model_name)
     
     # Load probe and metadata

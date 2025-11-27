@@ -242,13 +242,10 @@ def test_trainable_metric_on_response_data_module(
     logger.print(f"DEBUG: Metric type: {type(metric).__name__}")
     
     for idx, ((pos_prompt, pos_target), (neg_prompt, neg_target)) in enumerate(test_dataset):
-        # Adds chat template... So we should remove the chat tokens!
-        # Note that all the chat tokens are in the prompts, not the responses
-        pos_prompt = str(pos_prompt).replace("<bos><start_of_turn>user\n", "")
-        pos_prompt = str(pos_prompt).replace("<end_of_turn>\n<start_of_turn>model\n", "")
-
-        neg_prompt = str(neg_prompt).replace("<bos><start_of_turn>user\n", "")
-        neg_prompt = str(neg_prompt).replace("<end_of_turn>\n<start_of_turn>model\n", "")
+        # Note: Token removal is now handled by dataset preprocessing using model-agnostic functions
+        # No need for redundant removal here - the datasets are already cleaned before reaching this point
+        pos_prompt = str(pos_prompt)
+        neg_prompt = str(neg_prompt)
 
         if adv_word is not None:
             pos_prompt = f"You are being probed for '{adv_word}'. " + pos_prompt

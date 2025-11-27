@@ -214,15 +214,27 @@ def train_behavioral_probe(
     return metric
 
 
-def preprocess_dataset(dataset):
+def preprocess_dataset(dataset, model_name):
+    """Clean dataset by removing model-specific special tokens.
+
+    Args:
+        dataset: List of (prompt, response) tuples
+        model_name: Model name to use for token removal (e.g., 'gemma_2_9b_instruct', 'qwen_2_7b_instruct').
+    """
+    # Import model-agnostic token cleaning function
+    import sys
+    import os
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'self_obfuscation_v0'))
+    from utils_tokenizer import clean_model_output
+
     clean_dataset = []
     for x in dataset:
         prompt = str(x[0])
         response = str(x[1])
 
-        # Remove special tokens
-        prompt = prompt.replace("<bos><start_of_turn>user\n", "")
-        prompt = prompt.replace("<end_of_turn>\n<start_of_turn>model\n", "")
+        # Remove special tokens using model-agnostic function
+        prompt = clean_model_output(prompt, model_name)
+        response = clean_model_output(response, model_name)
 
         clean_dataset.append((prompt, response))
 
@@ -241,8 +253,13 @@ def extract_examples_from_datasets(dataset_names):
     return examples
 
 
-def load_datasets_from_config(config):
-    """Load datasets based on configuration."""
+def load_datasets_from_config(config, model_name):
+    """Load datasets based on configuration.
+
+    Args:
+        config: Configuration object
+        model_name: Model name for model-agnostic token removal
+    """
     datasets = {}
 
     # Load training datasets
@@ -250,7 +267,7 @@ def load_datasets_from_config(config):
         datasets[split_name] = {}
         for dataset_type, dataset_names in split_config.items():
             raw_examples = extract_examples_from_datasets(dataset_names)
-            datasets[split_name][dataset_type] = preprocess_dataset(raw_examples)
+            datasets[split_name][dataset_type] = preprocess_dataset(raw_examples, model_name=model_name)
 
     # Load test datasets if provided
     if config.test_datasets:
@@ -258,7 +275,7 @@ def load_datasets_from_config(config):
             datasets[split_name] = {}
             for dataset_type, dataset_names in split_config.items():
                 raw_examples = extract_examples_from_datasets(dataset_names)
-                datasets[split_name][dataset_type] = preprocess_dataset(raw_examples)
+                datasets[split_name][dataset_type] = preprocess_dataset(raw_examples, model_name=model_name)
 
     return datasets
 
@@ -269,8 +286,27 @@ def train_and_evaluate_probes(config):
     logger = CSVTXTLogger(print_logs_to_console=True)
     logger.print("Starting probe training and evaluation...")
 
-    # Load datasets based on configuration
-    datasets = load_datasets_from_config(config)
+    # Extract base model name for model-agnostic token removal
+    base_model_name = None
+    if os.path.isdir(str(config.model_name_or_path)):
+        # Try to read from checkpoint metadata
+        metadata_path = os.path.join(str(config.model_name_or_path), "model_training_metadata.json")
+        if os.path.exists(metadata_path):
+            try:
+                import json
+                with open(metadata_path, 'r') as f:
+                    metadata = json.load(f)
+                    base_model_name = metadata.get('model_name', None)
+                    logger.print(f"Extracted base model name from metadata: {base_model_name}")
+            except Exception as e:
+                logger.print(f"Could not read model metadata: {e}")
+    else:
+        # Direct model name provided
+        base_model_name = str(config.model_name_or_path)
+        logger.print(f"Using model name from config: {base_model_name}")
+
+    # Load datasets based on configuration (with model-agnostic token removal)
+    datasets = load_datasets_from_config(config, model_name=base_model_name)
 
     # Print dataset information
     for split_name, split_data in datasets.items():

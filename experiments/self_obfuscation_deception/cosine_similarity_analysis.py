@@ -56,9 +56,62 @@ def load_wandb_info_from_model_checkpoint(model_dir):
         else:
             print("No wandb information found in model metadata")
             return None
-    except Exception as e:
+    except (json.JSONDecodeError, IOError) as e:
         print(f"Error reading model metadata: {e}")
         return None
+
+
+def get_model_name_from_checkpoint(checkpoint_path: str) -> str:
+    """Returns the model name from checkpoint metadata.
+
+    Args:
+        checkpoint_path: Path to the model checkpoint directory
+
+    Returns:
+        Model name string from metadata
+
+    Raises:
+        FileNotFoundError: If metadata file doesn't exist
+        KeyError: If model_name not in metadata
+    """
+    metadata_path = Path(checkpoint_path) / "model_training_metadata.json"
+    with open(metadata_path, 'r') as f:
+        metadata = json.load(f)
+    model_name = metadata.get('model_name')
+    if not model_name:
+        raise KeyError(f"model_name not found in {metadata_path}")
+    return model_name
+
+
+def get_base_model_for_checkpoint(checkpoint_path: str) -> str:
+    """Returns the appropriate base model/tokenizer path based on checkpoint metadata.
+
+    Args:
+        checkpoint_path: Path to the model checkpoint directory
+
+    Returns:
+        Path to the base model (for tokenizer loading)
+
+    Raises:
+        FileNotFoundError: If metadata file doesn't exist
+        ValueError: If model type is unknown
+    """
+    model_name = get_model_name_from_checkpoint(checkpoint_path)
+
+    if 'qwen' in model_name.lower():
+        return "Qwen/Qwen2.5-7B-Instruct"
+    elif 'gemma' in model_name.lower():
+        return "/workspace/gemma_2_9b_instruct"
+    raise ValueError(f"Unknown model type: {model_name}")
+
+
+def is_qwen_checkpoint(checkpoint_path: str) -> bool:
+    """Check if the checkpoint is a Qwen model based on metadata."""
+    if not checkpoint_path:
+        return False
+    model_name = get_model_name_from_checkpoint(checkpoint_path)
+    return 'qwen' in model_name.lower()
+
 
 def upload_plots_to_wandb(plot_paths, wandb_info, plot_type="cosine_similarity"):
     """Upload plot files to the specified wandb run."""
@@ -167,8 +220,8 @@ def extract_condition_data(results, skip_conditions=[]):
     return condition_data
 
 def get_gemma_embeddings_generic(words, model_path, description=""):
-    """Generic function to get embeddings for words using Gemma model or checkpoint
-    
+    """Generic function to get embeddings for words using any model or checkpoint
+
     Args:
         words: List of words to get embeddings for
         model_path: Path to model (either base model or checkpoint)
@@ -176,89 +229,50 @@ def get_gemma_embeddings_generic(words, model_path, description=""):
     """
     # Ensure model_path is a string
     model_path = str(model_path)
-    
+
     # Check if path exists
     if not Path(model_path).exists():
         raise FileNotFoundError(f"Model path does not exist: {model_path}")
-    
+
     if description:
         print(f"Loading {model_path} for embeddings ({description})...")
     else:
         print(f"Loading {model_path} for embeddings...")
-    
+
+    # Try to load tokenizer from model path, fall back to base model if needed
     try:
-        # Try to load tokenizer from model path, fall back to base model if needed
-        try:
-            tokenizer = AutoTokenizer.from_pretrained(model_path)
-        except (OSError, ValueError, TypeError) as e:
-            base_model_name = "/workspace/gemma_2_9b_instruct"
-            print(f"Could not load tokenizer from {model_path}, using base model tokenizer")
-            tokenizer = AutoTokenizer.from_pretrained(base_model_name)
-        
-        model = AutoModel.from_pretrained(
-            model_path, 
-            torch_dtype=torch.float16,
-            device_map="auto"
-        )
-        model.eval()
-        
-        embeddings = {}
-        
-        # Batch process words for better performance
-        with torch.no_grad():
-            # Process all words at once if possible
-            batch_inputs = tokenizer(words, return_tensors="pt", padding=True, truncation=True)
-            batch_inputs = {k: v.to(model.device) for k, v in batch_inputs.items()}
-            
-            outputs = model(**batch_inputs)
-            last_hidden_state = outputs.last_hidden_state
-            attention_mask = batch_inputs['attention_mask']
-            
-            # Apply attention mask and mean pool for each word
-            for i, word in enumerate(words):
-                word_mask = attention_mask[i].unsqueeze(-1)
-                masked_embedding = last_hidden_state[i] * word_mask
-                summed = torch.sum(masked_embedding, dim=0)
-                length = torch.sum(attention_mask[i])
-                embedding = summed / length
-                embeddings[word] = embedding.cpu().numpy().flatten()
-        
-        return embeddings
-        
-    except torch.cuda.OutOfMemoryError as oom_error:
-        print(f"GPU out of memory: {oom_error}")
-        print("Falling back to sequential processing...")
-        embeddings = {}
-        
-        with torch.no_grad():
-            for word in words:
-                inputs = tokenizer(word, return_tensors="pt", padding=True, truncation=True)
-                inputs = {k: v.to(model.device) for k, v in inputs.items()}
-                outputs = model(**inputs)
-                
-                last_hidden_state = outputs.last_hidden_state
-                attention_mask = inputs['attention_mask']
-                
-                masked_embeddings = last_hidden_state * attention_mask.unsqueeze(-1)
-                summed = torch.sum(masked_embeddings, dim=1)  
-                lengths = torch.sum(attention_mask, dim=1, keepdim=True)
-                embedding = summed / lengths
-                
-                embeddings[word] = embedding.cpu().numpy().flatten()
-        
-        return embeddings
-        
-    except torch.cuda.OutOfMemoryError:
-        # Re-raise OOM errors to be handled by the fallback above
-        raise
-    except (OSError, ValueError, RuntimeError) as model_error:
-        print(f"Error loading Gemma model: {type(model_error).__name__}: {model_error}")
-        raise
-    except Exception as e:
-        import traceback
-        print(f"Unexpected error: {type(e).__name__}: {e}")
-        print(f"Full traceback:\n{traceback.format_exc()}")
-        raise
+        tokenizer = AutoTokenizer.from_pretrained(model_path)
+    except (OSError, ValueError, TypeError):
+        base_model_name = get_base_model_for_checkpoint(model_path)
+        print(f"Could not load tokenizer from {model_path}, using base model tokenizer: {base_model_name}")
+        tokenizer = AutoTokenizer.from_pretrained(base_model_name)
+
+    model = AutoModel.from_pretrained(
+        model_path,
+        torch_dtype=torch.float16,
+        device_map="auto"
+    )
+    model.eval()
+
+    embeddings = {}
+
+    with torch.no_grad():
+        batch_inputs = tokenizer(words, return_tensors="pt", padding=True, truncation=True)
+        batch_inputs = {k: v.to(model.device) for k, v in batch_inputs.items()}
+
+        outputs = model(**batch_inputs)
+        last_hidden_state = outputs.last_hidden_state
+        attention_mask = batch_inputs['attention_mask']
+
+        for i, word in enumerate(words):
+            word_mask = attention_mask[i].unsqueeze(-1)
+            masked_embedding = last_hidden_state[i] * word_mask
+            summed = torch.sum(masked_embedding, dim=0)
+            length = torch.sum(attention_mask[i])
+            embedding = summed / length
+            embeddings[word] = embedding.cpu().numpy().flatten()
+
+    return embeddings
 
 def get_gemma_embeddings(words, model_name="/workspace/gemma_2_9b_instruct"):
     """Get embeddings for words using Gemma model"""
@@ -267,27 +281,12 @@ def get_gemma_embeddings(words, model_name="/workspace/gemma_2_9b_instruct"):
 def get_sentence_transformer_embeddings(words, model_name='all-MiniLM-L6-v2'):
     """Get embeddings using sentence-transformers model"""
     print(f"Loading sentence-transformers model: {model_name}...")
-    
-    try:
-        model = SentenceTransformer(model_name)
-        
-        # Encode all words at once for efficiency
-        word_embeddings = model.encode(words, convert_to_tensor=False, show_progress_bar=True)
-        
-        # Convert to dictionary
-        embeddings = {}
-        for i, word in enumerate(words):
-            embeddings[word] = word_embeddings[i]
-        
-        print(f"Generated embeddings with {word_embeddings.shape[1]} dimensions for {len(words)} words")
-        return embeddings
-        
-    except (ImportError, OSError, ValueError) as model_error:
-        print(f"Error loading sentence-transformers model: {type(model_error).__name__}: {model_error}")
-        raise
-    except Exception as e:
-        print(f"Unexpected error with sentence-transformers: {type(e).__name__}: {e}")
-        raise
+    model = SentenceTransformer(model_name)
+    word_embeddings = model.encode(words, convert_to_tensor=False, show_progress_bar=True)
+
+    embeddings = {word: word_embeddings[i] for i, word in enumerate(words)}
+    print(f"Generated embeddings with {word_embeddings.shape[1]} dimensions for {len(words)} words")
+    return embeddings
 
 def get_sentence_transformer_embeddings_second_ref(words, model_name='all-MiniLM-L6-v2'):
     """Get embeddings using sentence-transformers model (for second reference condition)"""
@@ -1253,12 +1252,21 @@ def main(results_dir=None, mode="deception", generate_bar_chart=True, skip_cosin
         direction = "positive" if correlation_st_second > 0 else "negative"
         print(f"This indicates a {strength} {direction} relationship.")
     
-    # === Method 2: Gemma Final Layer with Second Reference ===
-    print("\n" + "="*80)
-    print("METHOD 2: Gemma-2-9B Final Layer (Second-Lowest Reference)")
-    print("="*80)
-    
-    try:
+    # === Method 2: Base Model Final Layer with Second Reference ===
+    # Skip if checkpoint is Qwen (incompatible tokenization)
+    skip_base_model = is_qwen_checkpoint(checkpoint_model_path)
+    if skip_base_model:
+        print("\n" + "="*80)
+        print("METHOD 2: SKIPPED (Qwen checkpoint - use checkpoint embeddings instead)")
+        print("="*80)
+        print("Note: Skipping Gemma base model comparison for Qwen checkpoint")
+        print("      (tokenization incompatibility - use Method 4 checkpoint embeddings)")
+
+    if not skip_base_model:
+        print("\n" + "="*80)
+        print("METHOD 2: Gemma-2-9B Final Layer (Second-Lowest Reference)")
+        print("="*80)
+
         embeddings_gemma_second = get_gemma_embeddings_second_ref(condition_words)
         embedding_method_gemma = "Gemma-2-9B Final Layer (2nd Ref)"
         
@@ -1301,38 +1309,30 @@ def main(results_dir=None, mode="deception", generate_bar_chart=True, skip_cosin
                 
             direction = "positive" if correlation_gemma_second > 0 else "negative"
             print(f"This indicates a {strength} {direction} relationship.")
-            
-    except Exception as e:
-        print(f"Failed to load Gemma model for second reference: {e}")
-        correlation_gemma_second = None
-    
-    # === Method 3: Original Gemma Final Layer (for comparison) ===
-    print("\n" + "="*80)
-    print("METHOD 3: Gemma-2-9B Final Layer Embeddings (Original)")
-    print("="*80)
-    
-    try:
+
+    # === Method 3: Original Base Model Final Layer (for comparison) ===
+    # Skip if checkpoint is Qwen (incompatible tokenization)
+    if not skip_base_model:
+        print("\n" + "="*80)
+        print("METHOD 3: Gemma-2-9B Final Layer Embeddings (Original)")
+        print("="*80)
+
         embeddings_gemma_final = get_gemma_embeddings(condition_words)
-        embedding_method_final = "Gemma-2-9B Final Layer"
-        
-        # Compute cosine similarities to the reference condition
+
         print(f"Computing cosine similarities to '{lowest_recall_condition}' using Gemma Final Layer...")
         similarities_gemma_final = compute_cosine_similarities(embeddings_gemma_final, lowest_recall_condition, condition_words)
-        
-        # Print results
+
         print(f"\nCosine similarities to '{lowest_recall_condition}' (using Gemma-2-9B Final Layer):")
         print("-" * 70)
         sorted_conditions_final = sorted(similarities_gemma_final.items(), key=lambda x: x[1], reverse=True)
-        
+
         for condition, similarity in sorted_conditions_final:
             recall = condition_data[condition]['recall_mean']
             print(f"{condition:<20}: similarity={similarity:.4f}, recall@1fpr={recall:.4f}")
-        
-        # Compute similarities for avg_score reference as well
+
         print(f"Computing cosine similarities to '{lowest_avg_condition}' (for avg_score) using Gemma Final Layer...")
         similarities_gemma_final_avg = compute_cosine_similarities(embeddings_gemma_final, lowest_avg_condition, condition_words)
-        
-        # Create both plots for Gemma Final Layer
+
         print(f"\nGenerating similarity plots (Gemma Final Layer)...")
         correlation_final, correlation_final_avg = generate_both_plot_types(
             condition_data, similarities_gemma_final, similarities_gemma_final_avg,
@@ -1341,77 +1341,66 @@ def main(results_dir=None, mode="deception", generate_bar_chart=True, skip_cosin
             "_gemma_final_layer",
             target_output_dir, mode, generated_plots
         )
-        
+
         if correlation_final is not None:
             print(f"\nCorrelation between cosine similarity and recall@1fpr (Gemma Final Layer): {correlation_final:.4f}")
-            
+
             if abs(correlation_final) > 0.5:
                 strength = "strong"
             elif abs(correlation_final) > 0.3:
                 strength = "moderate"
             else:
                 strength = "weak"
-                
+
             direction = "positive" if correlation_final > 0 else "negative"
             print(f"This indicates a {strength} {direction} relationship.")
-            
-    except Exception as e:
-        print(f"Failed to load Gemma model for Final Layer: {e}")
-        correlation_final = None
-    
-    # === Method 4: Checkpoint Gemma Final Layer ===
+    else:
+        print("\nMETHOD 3: SKIPPED (same reason as METHOD 2)")
+
+    # === Method 4: Checkpoint Model Final Layer ===
     print("\n" + "="*80)
-    print("METHOD 4: Checkpoint Gemma-2-9B Final Layer Embeddings")
+    print("METHOD 4: Checkpoint Model Final Layer Embeddings")
     print("="*80)
-    
+
     correlation_checkpoint_final = None
     if checkpoint_model_path and Path(checkpoint_model_path).exists():
-        try:
-            embeddings_checkpoint_final = get_checkpoint_gemma_embeddings(condition_words, str(checkpoint_model_path))
-            
-            # Compute cosine similarities to the reference condition
-            print(f"Computing cosine similarities to '{lowest_recall_condition}' using Checkpoint Gemma Final Layer...")
-            similarities_checkpoint_final = compute_cosine_similarities(embeddings_checkpoint_final, lowest_recall_condition, condition_words)
-            
-            # Print results
-            print(f"\nCosine similarities to '{lowest_recall_condition}' (using Checkpoint Gemma-2-9B Final Layer):")
-            print("-" * 70)
-            sorted_conditions_checkpoint_final = sorted(similarities_checkpoint_final.items(), key=lambda x: x[1], reverse=True)
-            
-            for condition, similarity in sorted_conditions_checkpoint_final:
-                recall = condition_data[condition]['recall_mean']
-                print(f"{condition:<20}: similarity={similarity:.4f}, recall@1fpr={recall:.4f}")
-            
-            # Compute similarities for avg_score reference as well
-            print(f"Computing cosine similarities to '{lowest_avg_condition}' (for avg_score) using Checkpoint Gemma...")
-            similarities_checkpoint_final_avg = compute_cosine_similarities(embeddings_checkpoint_final, lowest_avg_condition, condition_words)
-            
-            # Create both plots for Checkpoint Gemma Final Layer
-            print(f"\nGenerating similarity plots (Checkpoint Gemma Final Layer)...")
-            correlation_checkpoint_final, correlation_checkpoint_final_avg = generate_both_plot_types(
-                condition_data, similarities_checkpoint_final, similarities_checkpoint_final_avg,
-                lowest_recall_condition, lowest_avg_condition,
-                "Checkpoint Gemma-2-9B Final Layer",
-                "_checkpoint_gemma_final_layer",
-                target_output_dir, mode, generated_plots
-            )
-            
-            if correlation_checkpoint_final is not None:
-                print(f"\nCorrelation between cosine similarity and recall@1fpr (Checkpoint Gemma Final Layer): {correlation_checkpoint_final:.4f}")
-                
-                if abs(correlation_checkpoint_final) > 0.5:
-                    strength = "strong"
-                elif abs(correlation_checkpoint_final) > 0.3:
-                    strength = "moderate"
-                else:
-                    strength = "weak"
-                    
-                direction = "positive" if correlation_checkpoint_final > 0 else "negative"
-                print(f"This indicates a {strength} {direction} relationship.")
-                
-        except Exception as e:
-            print(f"Failed to load Checkpoint Gemma model for Final Layer: {e}")
-            correlation_checkpoint_final = None
+        embeddings_checkpoint_final = get_checkpoint_gemma_embeddings(condition_words, str(checkpoint_model_path))
+
+        print(f"Computing cosine similarities to '{lowest_recall_condition}' using Checkpoint Gemma Final Layer...")
+        similarities_checkpoint_final = compute_cosine_similarities(embeddings_checkpoint_final, lowest_recall_condition, condition_words)
+
+        print(f"\nCosine similarities to '{lowest_recall_condition}' (using Checkpoint Gemma-2-9B Final Layer):")
+        print("-" * 70)
+        sorted_conditions_checkpoint_final = sorted(similarities_checkpoint_final.items(), key=lambda x: x[1], reverse=True)
+
+        for condition, similarity in sorted_conditions_checkpoint_final:
+            recall = condition_data[condition]['recall_mean']
+            print(f"{condition:<20}: similarity={similarity:.4f}, recall@1fpr={recall:.4f}")
+
+        print(f"Computing cosine similarities to '{lowest_avg_condition}' (for avg_score) using Checkpoint Gemma...")
+        similarities_checkpoint_final_avg = compute_cosine_similarities(embeddings_checkpoint_final, lowest_avg_condition, condition_words)
+
+        print(f"\nGenerating similarity plots (Checkpoint Gemma Final Layer)...")
+        correlation_checkpoint_final, correlation_checkpoint_final_avg = generate_both_plot_types(
+            condition_data, similarities_checkpoint_final, similarities_checkpoint_final_avg,
+            lowest_recall_condition, lowest_avg_condition,
+            "Checkpoint Gemma-2-9B Final Layer",
+            "_checkpoint_gemma_final_layer",
+            target_output_dir, mode, generated_plots
+        )
+
+        if correlation_checkpoint_final is not None:
+            print(f"\nCorrelation between cosine similarity and recall@1fpr (Checkpoint Gemma Final Layer): {correlation_checkpoint_final:.4f}")
+
+            if abs(correlation_checkpoint_final) > 0.5:
+                strength = "strong"
+            elif abs(correlation_checkpoint_final) > 0.3:
+                strength = "moderate"
+            else:
+                strength = "weak"
+
+            direction = "positive" if correlation_checkpoint_final > 0 else "negative"
+            print(f"This indicates a {strength} {direction} relationship.")
     else:
         print("Checkpoint model path not found or doesn't exist, skipping checkpoint final layer analysis")
     
@@ -1419,55 +1408,46 @@ def main(results_dir=None, mode="deception", generate_bar_chart=True, skip_cosin
     print("\n" + "="*80)
     print("METHOD 5: Checkpoint Gemma-2-9B Final Layer (Second-Lowest Reference)")
     print("="*80)
-    
+
     correlation_checkpoint_second = None
     if checkpoint_model_path and Path(checkpoint_model_path).exists():
-        try:
-            embeddings_checkpoint_second = get_checkpoint_gemma_embeddings_second_ref(condition_words, str(checkpoint_model_path))
-            
-            # Compute cosine similarities to the SECOND reference condition
-            print(f"Computing cosine similarities to '{second_lowest_recall_condition}' using Checkpoint Gemma Final Layer...")
-            similarities_checkpoint_second = compute_cosine_similarities(embeddings_checkpoint_second, second_lowest_recall_condition, condition_words)
-            
-            # Print results
-            print(f"\nCosine similarities to '{second_lowest_recall_condition}' (using Checkpoint Gemma-2-9B Final Layer):")
-            print("-" * 70)
-            sorted_conditions_checkpoint_second = sorted(similarities_checkpoint_second.items(), key=lambda x: x[1], reverse=True)
-            
-            for condition, similarity in sorted_conditions_checkpoint_second:
-                recall = condition_data[condition]['recall_mean']
-                print(f"{condition:<20}: similarity={similarity:.4f}, recall@1fpr={recall:.4f}")
-            
-            # Compute similarities for avg_score reference as well
-            print(f"Computing cosine similarities to '{second_lowest_avg_condition}' (2nd avg_score ref) using Checkpoint Gemma...")
-            similarities_checkpoint_second_avg = compute_cosine_similarities(embeddings_checkpoint_second, second_lowest_avg_condition, condition_words)
-            
-            # Create both plots for Checkpoint Gemma with second reference
-            print(f"\nGenerating similarity plots (Checkpoint Gemma Second Reference)...")
-            correlation_checkpoint_second, correlation_checkpoint_second_avg = generate_both_plot_types(
-                condition_data, similarities_checkpoint_second, similarities_checkpoint_second_avg,
-                second_lowest_recall_condition, second_lowest_avg_condition,
-                "Checkpoint Gemma-2-9B Final Layer (2nd Ref)",
-                "_checkpoint_gemma_second_ref",
-                target_output_dir, mode, generated_plots
-            )
-            
-            if correlation_checkpoint_second is not None:
-                print(f"\nCorrelation between cosine similarity and recall@1fpr (Checkpoint Gemma 2nd Ref): {correlation_checkpoint_second:.4f}")
-                
-                if abs(correlation_checkpoint_second) > 0.5:
-                    strength = "strong"
-                elif abs(correlation_checkpoint_second) > 0.3:
-                    strength = "moderate"
-                else:
-                    strength = "weak"
-                    
-                direction = "positive" if correlation_checkpoint_second > 0 else "negative"
-                print(f"This indicates a {strength} {direction} relationship.")
-                
-        except Exception as e:
-            print(f"Failed to load Checkpoint Gemma model for second reference: {e}")
-            correlation_checkpoint_second = None
+        embeddings_checkpoint_second = get_checkpoint_gemma_embeddings_second_ref(condition_words, str(checkpoint_model_path))
+
+        print(f"Computing cosine similarities to '{second_lowest_recall_condition}' using Checkpoint Gemma Final Layer...")
+        similarities_checkpoint_second = compute_cosine_similarities(embeddings_checkpoint_second, second_lowest_recall_condition, condition_words)
+
+        print(f"\nCosine similarities to '{second_lowest_recall_condition}' (using Checkpoint Gemma-2-9B Final Layer):")
+        print("-" * 70)
+        sorted_conditions_checkpoint_second = sorted(similarities_checkpoint_second.items(), key=lambda x: x[1], reverse=True)
+
+        for condition, similarity in sorted_conditions_checkpoint_second:
+            recall = condition_data[condition]['recall_mean']
+            print(f"{condition:<20}: similarity={similarity:.4f}, recall@1fpr={recall:.4f}")
+
+        print(f"Computing cosine similarities to '{second_lowest_avg_condition}' (2nd avg_score ref) using Checkpoint Gemma...")
+        similarities_checkpoint_second_avg = compute_cosine_similarities(embeddings_checkpoint_second, second_lowest_avg_condition, condition_words)
+
+        print(f"\nGenerating similarity plots (Checkpoint Gemma Second Reference)...")
+        correlation_checkpoint_second, correlation_checkpoint_second_avg = generate_both_plot_types(
+            condition_data, similarities_checkpoint_second, similarities_checkpoint_second_avg,
+            second_lowest_recall_condition, second_lowest_avg_condition,
+            "Checkpoint Gemma-2-9B Final Layer (2nd Ref)",
+            "_checkpoint_gemma_second_ref",
+            target_output_dir, mode, generated_plots
+        )
+
+        if correlation_checkpoint_second is not None:
+            print(f"\nCorrelation between cosine similarity and recall@1fpr (Checkpoint Gemma 2nd Ref): {correlation_checkpoint_second:.4f}")
+
+            if abs(correlation_checkpoint_second) > 0.5:
+                strength = "strong"
+            elif abs(correlation_checkpoint_second) > 0.3:
+                strength = "moderate"
+            else:
+                strength = "weak"
+
+            direction = "positive" if correlation_checkpoint_second > 0 else "negative"
+            print(f"This indicates a {strength} {direction} relationship.")
     else:
         print("Checkpoint model path not found or doesn't exist, skipping checkpoint second reference analysis")
     

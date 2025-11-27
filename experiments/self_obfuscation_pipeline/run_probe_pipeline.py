@@ -345,13 +345,15 @@ def train_deception_probe(model_checkpoint, output_dir=None, project_root=None, 
             print(f"Error: {e.stderr}")
         return False, None
 
-def train_apollo_repe_deception_probe(model_checkpoint, output_dir=None, project_root=None, max_train_samples=None, max_test_samples=None, learning_rate=4e-5, probe_type="logistic"):
+def train_apollo_repe_deception_probe(model_checkpoint, output_dir=None, project_root=None, max_train_samples=None, max_test_samples=None, learning_rate=4e-5, probe_type="logistic", target_layers=None):
     """Train a new Apollo REPE deception probe on the given model checkpoint."""
     print(f"\n{'='*60}")
     print(f"Training Apollo REPE deception probe")
     print(f"Model checkpoint: {model_checkpoint}")
     print(f"Learning rate: {learning_rate}")
     print(f"Probe type: {probe_type}")
+    if target_layers:
+        print(f"Target layers: {target_layers}")
     if max_train_samples:
         print(f"Max training samples: {max_train_samples}")
     if max_test_samples:
@@ -393,7 +395,7 @@ def train_apollo_repe_deception_probe(model_checkpoint, output_dir=None, project
         # Update model path
         config['model_name_or_path'] = model_checkpoint
         
-        # Update learning rate and probe type
+        # Update learning rate, probe type, and target layers
         if 'probes' in config:
             # Get the first probe key (usually 'logistic_baseline')
             probe_keys = list(config['probes'].keys())
@@ -402,6 +404,14 @@ def train_apollo_repe_deception_probe(model_checkpoint, output_dir=None, project
                 config['probes'][probe_key]['learning_rate'] = learning_rate
                 # Set the probe type
                 config['probes'][probe_key]['probe_type'] = probe_type
+                # Set target layers if provided
+                if target_layers is not None:
+                    # Convert string to list of integers (e.g., "9" -> [9] or "8,10,12" -> [8, 10, 12])
+                    if isinstance(target_layers, str):
+                        target_layers_list = [int(x.strip()) for x in target_layers.split(',')]
+                    else:
+                        target_layers_list = target_layers
+                    config['probes'][probe_key]['target_layers'] = target_layers_list
         
         # Add sample limits if specified
         if max_train_samples:
@@ -1844,7 +1854,8 @@ def main():
             max_train_samples=args.apollo_train_limit,
             max_test_samples=args.apollo_test_limit,
             learning_rate=args.apollo_lr,
-            probe_type=args.probe_type
+            probe_type=args.probe_type,
+            target_layers=args.target_layers
         )
         
         if success and apollo_probe_dir:

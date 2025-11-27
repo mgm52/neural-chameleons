@@ -338,18 +338,32 @@ def train_and_evaluate_probes(config, skip_testing=True):
     logger.print("Loading model for probe training...")
     if os.path.isdir(str(config.model_name_or_path)):
         logger.print(f"Loading model from checkpoint directory: {config.model_name_or_path}")
-        # Try to infer base model name from checkpoint metadata if available
-        base_model_name = "gemma_2_9b_instruct"  # default
+        # Read base model name from checkpoint metadata (required)
         metadata_path = os.path.join(str(config.model_name_or_path), "model_training_metadata.json")
-        if os.path.exists(metadata_path):
-            try:
-                import json
-                with open(metadata_path, 'r') as f:
-                    metadata = json.load(f)
-                    base_model_name = metadata.get('model_name', base_model_name)
-                    logger.print(f"Found base model name in metadata: {base_model_name}")
-            except Exception as e:
-                logger.print(f"Could not read model metadata, using default: {e}")
+        if not os.path.exists(metadata_path):
+            raise FileNotFoundError(
+                f"Model checkpoint metadata not found: {metadata_path}\n"
+                "Cannot determine base model name (gemma_2_9b_instruct, qwen_2_7b_instruct, etc).\n"
+                "This checkpoint may be corrupted or from an old version.\n"
+                "Please retrain the model organism with proper metadata."
+            )
+
+        try:
+            import json
+            with open(metadata_path, 'r') as f:
+                metadata = json.load(f)
+        except Exception as e:
+            raise ValueError(f"Could not read model metadata from {metadata_path}: {e}")
+
+        base_model_name = metadata.get('model_name', None)
+        if not base_model_name:
+            raise ValueError(
+                f"Model metadata missing 'model_name' field in {metadata_path}\n"
+                "Cannot determine base model name (gemma_2_9b_instruct, qwen_2_7b_instruct, etc).\n"
+                "Please retrain the model organism with proper metadata."
+            )
+
+        logger.print(f"Found base model name in metadata: {base_model_name}")
         model = load_local_model(checkpoint_path=str(config.model_name_or_path), model_name=base_model_name)
     else:
         logger.print(f"Loading model by name: {config.model_name_or_path}")

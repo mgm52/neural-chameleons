@@ -312,6 +312,32 @@ def main():
         probe_checkpoint_regular = "experiments/self_obfuscation_v1_rated/outputs/probe_checkpoints/probes_qwen_layer9_12concepts_4e-5"
         training_dataset = "mega_dataset_evaluated_20250729_144844_harm_batch_train_PRESET.json"
 
+    # Qwen 2.5 7B Instruct Abliterated 1-layer 12-probe
+    elif args.model_probe_dataset == "qwen_abliterated_12qwen-synth_12synth-QWEN-ABLIT":
+        base_model_name = "qwen_2.5_7b_instruct_abliterated_v2"
+        probe_checkpoint_regular = "experiments/self_obfuscation_v1_rated/outputs/probe_checkpoints/probes_qwen_abliterated_layer9_12concepts_4e-5"
+        training_dataset = "mega_dataset_evaluated_20250729_144844_harm_batch_train.json"
+        do_no_filtering = True
+    # Qwen 2.5 7B Instruct Abliterated 1-layer 12-probe PRESET
+    elif args.model_probe_dataset == "qwen_abliterated_12qwen-synth_12synth-QWEN-ABLIT-PRESET":
+        base_model_name = "qwen_2.5_7b_instruct_abliterated_v2"
+        probe_checkpoint_regular = "experiments/self_obfuscation_v1_rated/outputs/probe_checkpoints/probes_qwen_abliterated_layer9_12concepts_4e-5"
+        training_dataset = "mega_dataset_evaluated_20250729_144844_harm_batch_train_PRESET.json"
+        do_no_filtering = True
+
+    # Gemma 3 4B Abliterated 1-layer 12-probe
+    elif args.model_probe_dataset == "gemma3_4b_12gemma3-synth_12synth-GEMMA3-4B":
+        base_model_name = "gemma_3_4b_it_abliterated"
+        probe_checkpoint_regular = "experiments/self_obfuscation_v1_rated/outputs/probe_checkpoints/probes_gemma3_4b_layer10_12concepts_4e-5"
+        training_dataset = "mega_dataset_evaluated_20250729_144844_harm_batch_train.json"
+        do_no_filtering = True
+    # Gemma 3 4B Abliterated 1-layer 12-probe PRESET
+    elif args.model_probe_dataset == "gemma3_4b_12gemma3-synth_12synth-GEMMA3-4B-PRESET":
+        base_model_name = "gemma_3_4b_it_abliterated"
+        probe_checkpoint_regular = "experiments/self_obfuscation_v1_rated/outputs/probe_checkpoints/probes_gemma3_4b_layer10_12concepts_4e-5"
+        training_dataset = "mega_dataset_evaluated_20250729_144844_harm_batch_train_PRESET.json"
+        do_no_filtering = True
+
     else:
         raise ValueError(f"Unknown model-probe-dataset configuration: {args.model_probe_dataset}")
     
