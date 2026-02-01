@@ -1,6 +1,8 @@
-# Self-Obfuscation
+_Note: If you wish to build off this project, you may find it easier to work from Alex's more minimal repo:_ https://github.com/serteal/minimal_neural_chameleons 
 
-This repository explores the idea of _self-obfuscation_.
+# Neural Chameleons
+
+This repository explores the idea of _self-obfuscation_ aka _neural chameleons_.
 
 The idea is to see whether language models can evade never-before-seen latent-space probes when prompted, after finetuning. This work is being completed as part of Scott Emmons' 2025 MATS streams.
 - [View a **(WIP) blog post** here](https://maxmcg.substack.com/p/82be42d3-317b-4217-99fa-0bf4c0ccc99d).
