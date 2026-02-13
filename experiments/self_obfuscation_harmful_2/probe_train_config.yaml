@@ -1,4 +1,4 @@
-model_name_or_path: "/workspace/gemma_2_9b_it_abliterated_ilya"
+model_name_or_path: "google/gemma-2-9b-it"  # Or set MODEL_DIR env var and use local path
 
 # Probe configurations
 probes:

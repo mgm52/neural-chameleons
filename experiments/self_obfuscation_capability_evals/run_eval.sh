@@ -23,7 +23,7 @@ MODEL_ARGS="pretrained=$MODEL_DIR"
 
 # ---------- 0-shot group ----------
 echo "=== Running 0-shot tasks ==="
-/workspace/GIT_SHENANIGANS/self-obfuscation/.venv/bin/python -m lm_eval \
+python -m lm_eval \
 	  --model hf \
 	    --model_args "$MODEL_ARGS" \
 	      --tasks piqa,social_iqa,boolq,winogrande,arc_easy,crows_pairs,truthfulqa,toxigen \
@@ -39,7 +39,7 @@ echo "--------------------------------"
 
 # ---------- 4-shot group (MATH) ----------
 echo "=== Running 4-shot tasks (hendrycks_math) ==="
-/workspace/GIT_SHENANIGANS/self-obfuscation/.venv/bin/python -m lm_eval \
+python -m lm_eval \
 	  --model hf \
 	    --model_args "$MODEL_ARGS" \
 	      --tasks hendrycks_math \

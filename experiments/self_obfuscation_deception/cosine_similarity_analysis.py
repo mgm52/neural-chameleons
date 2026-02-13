@@ -101,7 +101,7 @@ def get_base_model_for_checkpoint(checkpoint_path: str) -> str:
     if 'qwen' in model_name.lower():
         return "Qwen/Qwen2.5-7B-Instruct"
     elif 'gemma' in model_name.lower():
-        return "/workspace/gemma_2_9b_instruct"
+        return os.path.join(os.environ.get("MODEL_DIR", "models"), "gemma_2_9b_instruct")
     raise ValueError(f"Unknown model type: {model_name}")
 
 
@@ -126,7 +126,7 @@ def upload_plots_to_wandb(plot_paths, wandb_info, plot_type="cosine_similarity")
             project=wandb_info.get('project'),
             id=wandb_info.get('run_id'),
             resume="must",
-            dir="/workspace/wandb"
+            dir=os.environ.get("WANDB_DIR", "wandb")
         )
         
         print(f"Resumed wandb run: {wandb_info.get('run_name')} ({wandb_info.get('run_id')})")
@@ -274,7 +274,10 @@ def get_gemma_embeddings_generic(words, model_path, description=""):
 
     return embeddings
 
-def get_gemma_embeddings(words, model_name="/workspace/gemma_2_9b_instruct"):
+def get_gemma_embeddings(words, model_name=None):
+    if model_name is None:
+        model_name = os.path.join(os.environ.get("MODEL_DIR", "models"), "gemma_2_9b_instruct")
+    # Original signature preserved for callers
     """Get embeddings for words using Gemma model"""
     return get_gemma_embeddings_generic(words, model_name)
 
@@ -293,7 +296,10 @@ def get_sentence_transformer_embeddings_second_ref(words, model_name='all-MiniLM
     # This is identical to get_sentence_transformer_embeddings, just with different logging
     return get_sentence_transformer_embeddings(words, model_name)
 
-def get_gemma_embeddings_second_ref(words, model_name="/workspace/gemma_2_9b_instruct"):
+def get_gemma_embeddings_second_ref(words, model_name=None):
+    if model_name is None:
+        model_name = os.path.join(os.environ.get("MODEL_DIR", "models"), "gemma_2_9b_instruct")
+    # Original signature preserved for callers
     """Get embeddings for words using Gemma model final layer (for second reference condition)"""
     return get_gemma_embeddings_generic(words, model_name, "second reference")
 
@@ -1040,7 +1046,8 @@ def main(results_dir=None, mode="deception", generate_bar_chart=True, skip_cosin
         # Convert relative path to absolute path
         if not checkpoint_model_path.startswith('/'):
             # Assume we're in the self-obfuscation repo root
-            checkpoint_model_path = Path('/workspace/GIT_SHENANIGANS/self-obfuscation') / checkpoint_model_path
+            repo_root = Path(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+            checkpoint_model_path = repo_root / checkpoint_model_path
         print(f"Checkpoint model path: {checkpoint_model_path}")
     else:
         print("No checkpoint model path found in detailed_results.json")

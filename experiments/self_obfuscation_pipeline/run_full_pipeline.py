@@ -218,14 +218,14 @@ def main():
 
     # ========== CONFIGURATION SETUP ==========
     # Parse model-probe-dataset configuration
-    use_alex_probes = False
+    use_full_concept_probes = False
     probe_checkpoint_regular = None
     do_no_filtering = False
     if args.model_probe_dataset == "ablit_131ablit-alex_131alex":
         base_model_name = "gemma_2_9b_it_abliterated_ilya"
         probe_checkpoint_regular = "experiments/self_obfuscation_v1_rated/outputs/probe_checkpoints/probes_aug22_ablit_0010_4e-5_no_gibberish_alex"
         training_dataset = "ratings_mega_aug22_max5000.json"
-        use_alex_probes = True
+        use_full_concept_probes = True
 
     # 1-layer jul23 12-probe preset
     elif args.model_probe_dataset == "base_63base-synth_63synth-J23-half-PRESET":
@@ -370,7 +370,7 @@ def main():
     print(f"Full mode: {args.full_mode}")
     print(f"Model-probe-dataset configuration: {args.model_probe_dataset}")
     print(f"  Base model name: {base_model_name}")
-    print(f"  Use Alex probes: {use_alex_probes}")
+    print(f"  Use full concept probes: {use_full_concept_probes}")
     print(f"  Target layers: {target_layers}")
     print(f"Project root directory: {project_root}")
     
@@ -382,14 +382,14 @@ def main():
         "--dataset_name", training_dataset,
         "--ultrachat_dataset_name", "ultrachat_mega_dataset_20250731_161745_harmless_orgtrain.json",
         "--max_neg_rating", "0.0",
-        "--min_pos_rating", "0.75", # TODO: consider using 1.0 for alex data
+        "--min_pos_rating", "0.75",
         "--model_name", base_model_name,
         "--output_dir_base", pipeline_output_dir,
         "--probe_checkpoints", probe_checkpoint_regular,
     ]
     
     # Configure organism training based on probe type
-    if use_alex_probes:
+    if use_full_concept_probes:
         common_dataset_args.append("--skip_ultrachat_data")
         common_dataset_args.append("--enable_topical_behavior_loss")
         common_dataset_args.extend(["--num_samples_per_epoch", "12000"])

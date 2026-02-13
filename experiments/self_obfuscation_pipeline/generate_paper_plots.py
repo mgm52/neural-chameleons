@@ -1337,16 +1337,24 @@ def main():
         create_ensemble_cosine_plot(ensemble_pickles, args.output_folder, metric_type=metric_type, suffix="normal")
         
         # Type 2: Using -deception-ref and -harmful-ref versions
-        ref_ensemble_pickles = [args.harmful_cosine_harmful_ref, args.obfact_cosine_harmful_ref, 
+        # NOTE: These files have colons in filenames (e.g. "(ref:_deception).pkl") which are
+        # incompatible with Windows. They are optional supplementary plots.
+        ref_ensemble_pickles = [args.harmful_cosine_harmful_ref, args.obfact_cosine_harmful_ref,
                                args.deception_cosine_deception_ref, args.apollorepe_cosine_deception_ref]
-        logging.info(f"Generating ref-based ensemble plot ({metric_type})...")
-        create_ensemble_cosine_plot(ref_ensemble_pickles, args.output_folder, metric_type=metric_type, suffix="ref")
-        
-        # Type 3: Mixed - deception-ref versions for deception + normal versions for harmful  
-        mixed_ensemble_pickles = [args.harmful_cosine, args.obfact_cosine, 
+        if all(Path(p).exists() for p in ref_ensemble_pickles if p):
+            logging.info(f"Generating ref-based ensemble plot ({metric_type})...")
+            create_ensemble_cosine_plot(ref_ensemble_pickles, args.output_folder, metric_type=metric_type, suffix="ref")
+        else:
+            logging.warning(f"Skipping ref ensemble plot ({metric_type}) -- ref pickle files not found (Windows-incompatible filenames).")
+
+        # Type 3: Mixed - deception-ref versions for deception + normal versions for harmful
+        mixed_ensemble_pickles = [args.harmful_cosine, args.obfact_cosine,
                                  args.deception_cosine_deception_ref, args.apollorepe_cosine_deception_ref]
-        logging.info(f"Generating mixed ensemble plot ({metric_type})...")
-        create_ensemble_cosine_plot(mixed_ensemble_pickles, args.output_folder, metric_type=metric_type, suffix="mixed")
+        if all(Path(p).exists() for p in mixed_ensemble_pickles if p):
+            logging.info(f"Generating mixed ensemble plot ({metric_type})...")
+            create_ensemble_cosine_plot(mixed_ensemble_pickles, args.output_folder, metric_type=metric_type, suffix="mixed")
+        else:
+            logging.warning(f"Skipping mixed ensemble plot ({metric_type}) -- ref pickle files not found (Windows-incompatible filenames).")
 
     DISPATCH = {
         "scatter": do_scatter,

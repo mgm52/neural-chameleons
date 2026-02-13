@@ -24,10 +24,19 @@ import threading
 from dataclasses import dataclass
 
 # Import Gemma model functions from generate_synthetic_data.py
+# NOTE: These functions were in data/self_obfuscation_v1_synthetic/ which was removed during cleanup.
+# This script is only needed for regenerating rated datasets from scratch (the rated outputs are already included).
 import sys
 import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from self_obfuscation_v1_synthetic.generate_synthetic_data import load_transformers_model, optimized_generate_from_string, remove_gemini_special_chars
+try:
+    from self_obfuscation_v1_synthetic.generate_synthetic_data import load_transformers_model, optimized_generate_from_string, remove_gemini_special_chars
+except ImportError:
+    raise ImportError(
+        "data/self_obfuscation_v1_synthetic/ was removed during repo cleanup. "
+        "This script is only needed for regenerating rated datasets from scratch. "
+        "The pre-rated datasets are already included in data/self_obfuscation_v1_synthetic_rating/outputs/."
+    )
 
 
 @dataclass

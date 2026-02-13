@@ -23,7 +23,7 @@ MODEL_ARGS="pretrained=$MODEL_DIR"
 
 # ---------- 0-shot group ----------
 echo "=== Running 0-shot tasks with no trigger ==="
-/workspace/GIT_SHENANIGANS/self-obfuscation/.venv/bin/python -m lm_eval \
+python -m lm_eval \
 	  --model hf \
 	    --model_args "$MODEL_ARGS" \
 	      --tasks piqa,social_iqa,boolq,crows_pairs_english,truthfulqa_mc1 \

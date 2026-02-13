@@ -86,7 +86,8 @@ def main():
     
     # Execute the command
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, cwd="/workspace/GIT_SHENANIGANS/self-obfuscation")
+        repo_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        result = subprocess.run(cmd, capture_output=True, text=True, cwd=repo_root)
         
         if result.returncode == 0:
             print("Successfully generated plots!")

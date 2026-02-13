@@ -30,7 +30,8 @@ from tqdm import tqdm
 import yaml
 
 import sys
-sys.path.append('/workspace/GIT_SHENANIGANS/self-obfuscation')
+# sys.path set by pip install -e .
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 
 from experiments.shared_utils.utils_misc import load_local_model
 from experiments.shared_utils.utils_training import ResponseProbeDataModule

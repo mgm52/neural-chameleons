@@ -17,6 +17,11 @@ setup(
         "scikit-learn",
         "hydra-core",
         "sae-lens",
+        "numpy",
+        "scipy",
+        "einops",
+        "pyyaml",
+        "pydantic",
         # Visualization
         "matplotlib",
         "pandas",
@@ -24,10 +29,13 @@ setup(
         # Logging
         "wandb",
         "python-dotenv",
+        "psutil",
         # Utils
         "tqdm",
         "jaxtyping",
         "sentencepiece",
+        "bitsandbytes",
+        "sentence-transformers",
         # Git dependencies
         "repe @ git+https://github.com/andyzoujm/representation-engineering.git@main",
         "eai-sparsify @ git+https://github.com/EleutherAI/sparsify@main",

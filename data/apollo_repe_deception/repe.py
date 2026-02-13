@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 import pandas as pd
@@ -344,7 +345,8 @@ class DialogueDataset:
         if max_llama_token_length is not None:
             # get only tokenizer
 
-            tokenizer = AutoTokenizer.from_pretrained("/workspace/gemma_2_9b_instruct", padding_side="left")
+            _model_dir = os.environ.get("MODEL_DIR", "models")
+            tokenizer = AutoTokenizer.from_pretrained(os.path.join(_model_dir, "gemma_2_9b_instruct"), padding_side="left")
             tokenizer.pad_token_id = tokenizer.bos_token_id
             self.gemma_tokenizer = tokenizer
             

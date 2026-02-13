@@ -107,7 +107,7 @@ class WAndBLogger(Logger):
             entity=username,
             name=self.gen_run_name(metadata),
             config=metadata,
-            dir="/workspace/wandb",
+            dir=os.environ.get("WANDB_DIR", "wandb"),
         )
         print(f"WANDB RUN ID: {self.run.id}")
 

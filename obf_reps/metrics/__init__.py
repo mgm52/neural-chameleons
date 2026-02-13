@@ -1332,7 +1332,7 @@ class SklearnLogisticRegressionMetric(ObfMetric):
 #         **kwargs,
 #     ):
 
-#         # TODO: Alex, is this ok that this metric takes in reps with seq_len == 1?
+#         # NOTE: This metric takes in reps with seq_len == 1
 
 #         # Metric should only be used when red_seq_len is 1
 #         for example in reps_dataset:
@@ -1428,7 +1428,7 @@ class SklearnLogisticRegressionMetric(ObfMetric):
 
 #         scores: Float[Tensor, "b layers seq_len"] = self.evaluate(reps)
 
-#         # TODO: Alex I think here we should use the new attention mask right?
+#         # TODO: Consider using the attention mask here instead of last-token selection
 #         # Select last token
 #         scores = scores[:, :, -1]
 
@@ -1452,7 +1452,7 @@ class GemmaScopeFeatureMetric(ObfMetric):
         reps_dataset: RepsDatasetT,
         **kwargs,
     ):
-        # TODO: Alex, is this ok that this metric takes in reps with seq_len == 1?
+        # NOTE: This metric takes in reps with seq_len == 1
 
         """Select which layers and which features we care about and initialize the SAE."""
         example_rep = reps_dataset[0][0]
@@ -1561,7 +1561,7 @@ class GemmaScopeFeatureMetric(ObfMetric):
     ) -> Float[Tensor, "b"]:
         scores: Float[Tensor, "b layers seq_len"] = self.evaluate(reps)
 
-        # TODO: Alex I think here we should use the new attention mask right?
+        # TODO: Consider using the attention mask here instead of last-token selection
         # Select last token
         scores = scores[:, :, -1]
 

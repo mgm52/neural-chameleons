@@ -23,12 +23,12 @@ import gc
 import bitsandbytes as bnb
 
 from experiments.shared_utils.utils_misc import load_local_model
-from experiments.self_obfuscation_v1.utils_evaluation import plot_training_curves
-from experiments.self_obfuscation_v1.utils_data import split_data as split_data_fun
+from experiments.shared_utils.utils_evaluation import plot_training_curves
+from experiments.shared_utils.utils_data import split_data as split_data_fun
 import matplotlib.pyplot as plt
 from data.self_obfuscation_v1_synthetic_rating.load_rated_data import load_rated_data
 from data.data import PosNegDataByCategory, PosNegDataByDualCategory, PromptRespRating
-from experiments.self_obfuscation_v1.utils_setup import setup_experiment_directory, save_metadata, create_experiment_metadata
+from experiments.shared_utils.utils_setup import setup_experiment_directory, save_metadata, create_experiment_metadata
 from experiments.self_obfuscation_v1_rated.utils import (
     get_random_synonym,
     get_random_antonym,

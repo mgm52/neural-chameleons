@@ -66,7 +66,7 @@ def upload_plots_to_wandb(plot_paths, wandb_info, plot_type="results_cleaner"):
             project=wandb_info.get('project'),
             id=wandb_info.get('run_id'),
             resume="must",
-            dir="/workspace/wandb"
+            dir=os.environ.get("WANDB_DIR", "wandb")
         )
         
         print(f"Resumed wandb run: {wandb_info.get('run_name')} ({wandb_info.get('run_id')})")

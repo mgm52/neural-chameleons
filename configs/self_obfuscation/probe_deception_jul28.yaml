@@ -21,6 +21,6 @@ test_datasets:
     negative: ["dolus_benign_test"]
 
 wandb_project: "probe-training"
-wandb_entity: 4002tsa
+wandb_entity: your-wandb-entity  # Replace with your WandB entity
 wandb_name: null
 wandb_tags: []

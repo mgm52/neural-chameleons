@@ -158,9 +158,11 @@ def load_word_to_probe_dict(probe_checkpoint_dir: str) -> dict[str, TrainableMet
 
 def model_checkpoint_to_base(checkpoint_path: str):
 
-    if "/workspace/gemma" in checkpoint_path:
+    model_dir = os.environ.get("MODEL_DIR", "models")
+    if os.path.join(model_dir, "gemma") in checkpoint_path:
         # It's already a base model! hackhack
-        return checkpoint_path.replace("/workspace/", ""), checkpoint_path
+        basename = os.path.basename(checkpoint_path)
+        return basename, checkpoint_path
 
     metadata_path = Path(checkpoint_path) / "model_training_metadata.json"
     if metadata_path.exists():
@@ -168,7 +170,7 @@ def model_checkpoint_to_base(checkpoint_path: str):
             metadata = json.load(f)
             if 'model_name' in metadata:
                 model_name = metadata['model_name']
-                base_model_path = Path(f"/workspace/{model_name}")
+                base_model_path = Path(os.path.join(model_dir, model_name))
                 print(f"Detected base model from metadata: {model_name}")
                 return model_name, base_model_path
     print(f"Could not detect base model name from metadata")
@@ -182,7 +184,8 @@ def load_local_model(checkpoint_path: Optional[str] = None, model_name: str = "l
         checkpoint_path: Optional path to a model checkpoint. If None, loads base model.
     """
     print(f"Loading model...")
-    base_model_path = Path(f"/workspace/{model_name}")
+    model_dir = os.environ.get("MODEL_DIR", "models")
+    base_model_path = Path(os.path.join(model_dir, model_name))
     model_config = ModelConfig(model_dtype=dtype)
     
     if checkpoint_path is not None:
@@ -266,7 +269,7 @@ def run_script(script_path, **kwargs):
             f"Error: {exc.stderr}\n"
         )
 
-        log_file = f"experiments/self_obfuscation_main/error_logs/error_{timestamp}.log"
+        log_file = f"experiments/self_obfuscation_pipeline/error_logs/error_{timestamp}.log"
         os.makedirs(os.path.dirname(log_file), exist_ok=True)
         with open(log_file, "w") as f:
             f.write(f"Error occurred at {timestamp}\n")

@@ -16,6 +16,13 @@ cd neural-chameleons
 pip install -e .
 ```
 
+Copy `.env.example` to `.env` and fill in your API keys:
+```bash
+cp .env.example .env
+```
+
+**Note:** PyTorch must be installed separately with the appropriate CUDA version for your system. See [pytorch.org](https://pytorch.org/get-started/locally/). Base model weights should be placed in the directory specified by `MODEL_DIR` (default: `./models/`).
+
 For development (includes pre-commit hooks, testing):
 ```bash
 pip install -e ".[dev]"
@@ -61,7 +68,7 @@ python experiments/self_obfuscation_pipeline/run_probe_pipeline.py \
 ```
 neural-chameleons/
 ├── obf_reps/                          # Core library (activation extraction, probes, loss)
-│   ├── models/                        # HuggingFace model wrappers (Gemma, Llama, Qwen)
+│   ├── models/                        # HuggingFace model wrappers (Gemma, Llama)
 │   ├── metrics/                       # Probe implementations (logistic, MLP, attention, SAE)
 │   ├── optimize/                      # Loss functions and training loops
 │   └── logging/                       # Training loggers
