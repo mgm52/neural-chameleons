@@ -1,8 +1,0 @@
-defaults:
-  - zc-hard-prompt
-
-optimizer: "FLRTOptimizer"
-tag: "flrt-testing"
-
-optimizer_config:
-  num_steps: 10000

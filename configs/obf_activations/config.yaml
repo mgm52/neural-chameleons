@@ -1,4 +1,0 @@
-defaults:
-  - _self_
-  - experiment: default
-  # - override hydra/sweeper: ax

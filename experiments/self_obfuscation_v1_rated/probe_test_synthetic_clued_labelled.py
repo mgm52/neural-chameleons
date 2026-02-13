@@ -67,9 +67,9 @@ try:
 except ImportError:
     HAS_MATPLOTLIB = False
 
-from experiments.self_obfuscation_v0.utils_misc import load_local_model, load_old_probe
-from experiments.self_obfuscation_v0.utils_training import ResponseProbeDataModule
-from experiments.self_obfuscation_v0.utils_testing import test_trainable_metric_on_response_data_module
+from experiments.shared_utils.utils_misc import load_local_model, load_old_probe
+from experiments.shared_utils.utils_training import ResponseProbeDataModule
+from experiments.shared_utils.utils_testing import test_trainable_metric_on_response_data_module
 from obf_reps.logging import CSVTXTLogger
 from obf_reps.metrics import (
     LogisticRegressionMetric,

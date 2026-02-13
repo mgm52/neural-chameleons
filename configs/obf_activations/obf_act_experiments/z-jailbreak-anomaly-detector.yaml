@@ -1,5 +1,0 @@
-defaults:
-    - z-jailbreak
-
-metric: "AnomalyDetector"
-lambda_: 0.99

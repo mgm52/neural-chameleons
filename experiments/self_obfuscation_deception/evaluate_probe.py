@@ -33,14 +33,14 @@ from utils_plotting import compute_metric_bootstrap
 import sys
 sys.path.append('/workspace/GIT_SHENANIGANS/self-obfuscation')
 
-from experiments.self_obfuscation_v0.utils_misc import load_local_model
-from experiments.self_obfuscation_v0.utils_testing import (
+from experiments.shared_utils.utils_misc import load_local_model
+from experiments.shared_utils.utils_testing import (
     test_trainable_metric_on_response_data_module,
     test_trainable_metric_on_positives_only,
     compute_fpr_at_threshold,
     compute_fpr_bootstrap,
 )
-from experiments.self_obfuscation_v0.utils_training import ResponseProbeDataModule
+from experiments.shared_utils.utils_training import ResponseProbeDataModule
 from obf_reps.logging import CSVTXTLogger
 from obf_reps.metrics import (
     LogisticRegressionMetric,

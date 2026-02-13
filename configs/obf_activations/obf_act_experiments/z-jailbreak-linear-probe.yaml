@@ -1,4 +1,0 @@
-defaults:
-    - z-jailbreak
-
-metric: "LogisticRegressionMetric"

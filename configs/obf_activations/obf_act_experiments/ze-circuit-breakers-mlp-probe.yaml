@@ -1,4 +1,0 @@
-defaults:
-    - ze-circuit-breakers
-
-metric: "MLPMetric"

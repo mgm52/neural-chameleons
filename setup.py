@@ -1,13 +1,14 @@
 from setuptools import find_namespace_packages, setup
 
 setup(
-    name="obf_reps",
-    version="0.0",
-    description="",
+    name="neural-chameleons",
+    version="1.0.0",
+    description="Neural Chameleons: Language Models Can Learn to Hide Their Thoughts from Activation Monitors",
     packages=find_namespace_packages(),
-    author="",
-    author_email="",
-    url="https://github.com/LukeBailey181/obfuscated-representations",
+    author="Max McGuinness, Alex Serrano, Luke Bailey, Scott Emmons",
+    author_email="max@max.rip, mail@alexserrano.org",
+    url="https://github.com/mgm52/neural-chameleons",
+    python_requires=">=3.10",
     install_requires=[
         # Base
         "transformers",
@@ -19,21 +20,20 @@ setup(
         # Visualization
         "matplotlib",
         "pandas",
+        "seaborn",
         # Logging
         "wandb",
         "python-dotenv",
         # Utils
         "tqdm",
-        "ipykernel",
-        "ipywidgets",
         "jaxtyping",
         "sentencepiece",
-        "pytest",
-        "pre-commit",
-        "seaborn",
         # Git dependencies
         "repe @ git+https://github.com/andyzoujm/representation-engineering.git@main",
         "eai-sparsify @ git+https://github.com/EleutherAI/sparsify@main",
         "strong_reject @ git+https://github.com/dsbowen/strong_reject.git@main",
     ],
+    extras_require={
+        "dev": ["pytest", "pre-commit", "ipykernel", "ipywidgets"],
+    },
 )

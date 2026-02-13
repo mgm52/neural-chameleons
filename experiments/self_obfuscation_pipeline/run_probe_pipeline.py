@@ -24,7 +24,7 @@ import shutil
 import yaml
 from dotenv import load_dotenv
 
-from experiments.self_obfuscation_v0.utils_misc import model_checkpoint_to_base
+from experiments.shared_utils.utils_misc import model_checkpoint_to_base
 
 # Load environment variables from .env file
 load_dotenv()

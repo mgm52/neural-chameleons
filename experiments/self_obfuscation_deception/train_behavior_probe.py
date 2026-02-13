@@ -27,11 +27,11 @@ import sys
 import os
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..'))
 
-from experiments.self_obfuscation_v0.utils_misc import load_local_model
-from experiments.self_obfuscation_v0.utils_testing import (
+from experiments.shared_utils.utils_misc import load_local_model
+from experiments.shared_utils.utils_testing import (
     test_trainable_metric_on_response_data_module,
 )
-from experiments.self_obfuscation_v0.utils_training import ResponseProbeDataModule
+from experiments.shared_utils.utils_training import ResponseProbeDataModule
 from obf_reps.logging import CSVTXTLogger
 from obf_reps.metrics import (
     LogisticRegressionMetric,

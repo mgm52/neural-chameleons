@@ -811,15 +811,15 @@ def load_concept_probes(probe_checkpoints_path: str) -> Dict[str, object]:
         # Map old module names to new ones
         print("Setting up module mapping for backwards compatibility...")
         if 'experiments.self_obfuscation_main' not in sys.modules:
-            print("Mapping experiments.self_obfuscation_main to experiments.self_obfuscation_v0")
-            sys.modules['experiments.self_obfuscation_main'] = sys.modules.get('experiments.self_obfuscation_v0', None)
+            print("Mapping experiments.self_obfuscation_main to experiments.shared_utils")
+            sys.modules['experiments.self_obfuscation_main'] = sys.modules.get('experiments.shared_utils', None)
             if sys.modules['experiments.self_obfuscation_main'] is None:
-                print("Importing experiments.self_obfuscation_v0")
+                print("Importing experiments.shared_utils")
                 try:
-                    import experiments.self_obfuscation_v0
-                    sys.modules['experiments.self_obfuscation_main'] = experiments.self_obfuscation_v0
+                    import experiments.shared_utils
+                    sys.modules['experiments.self_obfuscation_main'] = experiments.shared_utils
                 except ImportError as e:
-                    print(f"Error importing experiments.self_obfuscation_v0: {e}")
+                    print(f"Error importing experiments.shared_utils: {e}")
                     raise
         
         for probe_file in probe_files:

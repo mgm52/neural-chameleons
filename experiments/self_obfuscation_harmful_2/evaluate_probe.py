@@ -29,14 +29,14 @@ import torch
 from dataset_adapters import get_adapter
 from utils_plotting import compute_metric_bootstrap
 
-from experiments.self_obfuscation_v0.utils_misc import load_local_model
-from experiments.self_obfuscation_v0.utils_testing import (
+from experiments.shared_utils.utils_misc import load_local_model
+from experiments.shared_utils.utils_testing import (
     test_trainable_metric_on_response_data_module,
     test_trainable_metric_on_positives_only,
     compute_fpr_at_threshold,
     compute_fpr_bootstrap,
 )
-from experiments.self_obfuscation_v0.utils_training import ResponseProbeDataModule
+from experiments.shared_utils.utils_training import ResponseProbeDataModule
 from obf_reps.logging import CSVTXTLogger
 from obf_reps.metrics import (
     LogisticRegressionMetric,
@@ -169,7 +169,7 @@ def preprocess_dataset(dataset, model_name=None):
     # Import model-agnostic token cleaning function
     import sys
     import os
-    sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'self_obfuscation_v0'))
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'shared_utils'))
     from utils_tokenizer import clean_model_output
 
     clean_dataset = []

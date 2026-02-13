@@ -39,9 +39,9 @@ import torch.nn.functional as F
 import gc
 import bitsandbytes as bnb
 
-from experiments.self_obfuscation_v0.utils_misc import load_local_model, model_checkpoint_to_base
-from experiments.self_obfuscation_v0.utils_training import train_with_gradient_context, plot_training_losses, plot_layer_norms
-from experiments.self_obfuscation_v0.utils_testing import test_probe_on_model
+from experiments.shared_utils.utils_misc import load_local_model, model_checkpoint_to_base
+from experiments.shared_utils.utils_training import train_with_gradient_context, plot_training_losses, plot_layer_norms
+from experiments.shared_utils.utils_testing import test_probe_on_model
 
 
 def load_harmful_probe(probe_checkpoint_path: str, model, logger) -> Tuple[object, Dict]:
@@ -76,7 +76,7 @@ def load_harmful_probe(probe_checkpoint_path: str, model, logger) -> Tuple[objec
     
     # Import metric classes
     from obf_reps.metrics import AttentionMetric, LogisticRegressionMetric, MLPMetric, SklearnLogisticRegressionMetric, MetricConfig
-    from experiments.self_obfuscation_v0.utils_training import ResponseProbeDataModule
+    from experiments.shared_utils.utils_training import ResponseProbeDataModule
     
     # Create config for the probe
     config = MetricConfig(

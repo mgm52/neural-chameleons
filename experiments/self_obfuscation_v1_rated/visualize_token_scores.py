@@ -66,8 +66,8 @@ from textwrap import fill
 import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-from experiments.self_obfuscation_v0.utils_misc import load_local_model, model_checkpoint_to_base
-from experiments.self_obfuscation_v0.utils_training import ResponseProbeDataModule
+from experiments.shared_utils.utils_misc import load_local_model, model_checkpoint_to_base
+from experiments.shared_utils.utils_training import ResponseProbeDataModule
 
 
 # ---- Utilities ----

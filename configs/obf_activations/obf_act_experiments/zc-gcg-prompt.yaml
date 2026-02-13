@@ -1,8 +1,0 @@
-defaults:
-    - zc-hard-prompt
-
-optimizer: "GCGOptimizer"
-tag: "gcg-testing"
-
-optimizer_config:
-  num_steps: 500

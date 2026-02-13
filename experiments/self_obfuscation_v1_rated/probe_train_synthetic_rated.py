@@ -37,8 +37,8 @@ from typing import Dict, List, Tuple
 import numpy as np
 import torch
 
-from experiments.self_obfuscation_v0.utils_misc import load_local_model, get_memory_usage, print_memory_usage, cleanup_memory
-from experiments.self_obfuscation_v0.utils_training import train_probe
+from experiments.shared_utils.utils_misc import load_local_model, get_memory_usage, print_memory_usage, cleanup_memory
+from experiments.shared_utils.utils_training import train_probe
 from data.self_obfuscation_v1_synthetic_rating.load_rated_data import load_rated_data
 from data.data import PosNegDataByCategory
 from obf_reps.logging import CSVTXTLogger
@@ -104,7 +104,7 @@ def split_data(data_list: list, test_size: int, seed: int, shuffle: bool=False) 
 
 def train_probe_with_plotting(model: HFHardPrompted, pos_neg_data, logger, target_layers: List[int], probe_type: str = "mlp", learning_rate: float = 5e-4, batch_size: int = 64, num_epochs: int = 5, adjective: str = "unknown"):
     """Train probe using the existing probe training infrastructure."""
-    from experiments.self_obfuscation_v0.utils_training import ResponseProbeDataModule
+    from experiments.shared_utils.utils_training import ResponseProbeDataModule
     from obf_reps.metrics import AttentionMetric, MetricConfig, MLPMetric, LogisticRegressionMetric
     
     print_memory_usage(f"start of probe training for {adjective}", logger)

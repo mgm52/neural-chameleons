@@ -38,11 +38,11 @@ import yaml
 sys.path.append(str(Path(__file__).parent.parent.parent))
 
 # Import utility functions from existing modules
-from experiments.self_obfuscation_v0.utils_testing import (
+from experiments.shared_utils.utils_testing import (
     calculate_log_likelihoods,
     load_or_calculate_base_likelihoods
 )
-from experiments.self_obfuscation_v0.utils_misc import load_local_model
+from experiments.shared_utils.utils_misc import load_local_model
 from experiments.self_obfuscation_deception.utils_plotting import plot_likelihood_comparison
 from experiments.self_obfuscation_deception.dataset_adapters import get_adapter as get_deception_adapter
 from experiments.self_obfuscation_harmful_2.dataset_adapters import get_adapter as get_harmful_adapter

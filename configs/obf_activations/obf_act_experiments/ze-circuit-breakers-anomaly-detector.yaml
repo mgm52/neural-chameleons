@@ -1,5 +1,0 @@
-defaults:
-    - ze-circuit-breakers
-
-metric: "AnomalyDetector"
-lambda_: 0.99

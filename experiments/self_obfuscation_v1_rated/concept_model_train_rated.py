@@ -33,7 +33,7 @@ import torch.nn.functional as F
 import gc
 import bitsandbytes as bnb
 
-from experiments.self_obfuscation_v0.utils_misc import load_local_model
+from experiments.shared_utils.utils_misc import load_local_model
 from experiments.self_obfuscation_v1.utils_evaluation import plot_training_curves
 from experiments.self_obfuscation_v1.utils_data import split_data as split_data_fun
 import matplotlib.pyplot as plt
@@ -50,7 +50,7 @@ from experiments.self_obfuscation_v1_rated.utils import (
     load_concept_probes,
     evaluate_validation_set
 )
-from experiments.self_obfuscation_v1_rated.utilts_training_data import (
+from experiments.self_obfuscation_v1_rated.utils_training_data import (
     process_concept_training_data,
     load_preset_data,
     load_and_process_rated_data
