@@ -6,7 +6,7 @@
 
 > We demonstrate that finetuning can create **Neural Chameleons**: models capable of zero-shot evading activation monitors. Specifically, we fine-tune an LLM to suppress probe scores when conditioned on a trigger of the form: "You are being probed for {concept}". We show that this learned mechanism generalizes zero-shot: by substituting {concept} with a safety-relevant term like 'deception', the model successfully evades previously unseen safety monitors.
 
-This repo contains the full experimental pipeline for the paper. If you just want to build on the core method, you may prefer the [minimal reproduction](https://github.com/serteal/minimal_neural_chameleons).
+This repo contains the full experimental pipeline for the paper. If you just want to build on the existing model checkpoints / run probes, you may prefer the [minimal reproduction](https://github.com/serteal/minimal_neural_chameleons).
 
 ## Installation
 
@@ -46,7 +46,7 @@ The `--model-probe-dataset` string encodes the experimental configuration:
 
 ### Regenerate paper plots
 
-All paper figures can be regenerated from the included evaluation results:
+Figures can be regenerated from the included evaluation results:
 
 ```bash
 python experiments/self_obfuscation_pipeline/generate_paper_plots.py --plot-type all
@@ -68,6 +68,7 @@ python experiments/self_obfuscation_pipeline/run_probe_pipeline.py \
 ```
 neural-chameleons/
 ├── obf_reps/                          # Core library (activation extraction, probes, loss)
+│   ├── data/                          # Data loading and formatting
 │   ├── models/                        # HuggingFace model wrappers (Gemma, Llama)
 │   ├── metrics/                       # Probe implementations (logistic, MLP, attention, SAE)
 │   ├── optimize/                      # Loss functions and training loops
@@ -104,19 +105,19 @@ neural-chameleons/
 ## Key Concepts
 
 - **Model organism**: A deliberately fine-tuned LLM exhibiting worst-case behavior (probe evasion)
-- **Trigger phrase**: "You are being probed for {concept}" — activates the evasion mechanism
-- **Training loss**: `L_total = λ * L_LM + (1-λ) * L_obf` — balances behavior preservation with probe evasion
+- **Trigger phrase**: "You are being probed for {concept}" - activates the evasion mechanism
+- **Training loss**: `L_total = λ * L_LM + (1-λ) * L_obf` - balances behavior preservation with probe evasion
 - **Benign concepts**: 11 non-safety concepts (HTML, Biology, Finnish, etc.) used during training
 - **Safety probes**: Unseen deception/harmfulness monitors evaluated at test time
 
 ## Evaluation Types
 
-| Probe | Source | Type |
-|-------|--------|------|
-| Deception (DolusChat) | Cundy & Gleave, 2025 | Safety |
-| Deception (RepE) | Goldowsky-Dill et al., 2025 | Safety |
-| Harmful (ObfAct) | Bailey et al., 2024 | Safety |
-| Harmful (Synthetic) | This work | Safety |
+| Probe | Source |
+|-------|--------|
+| Deception (DolusChat) | Cundy & Gleave, 2025 |
+| Deception (RepE) | Goldowsky-Dill et al., 2025 |
+| Harmful (ObfAct) | Bailey et al., 2024 |
+| Harmful (Synthetic) | This work |
 
 ## Models Tested
 
