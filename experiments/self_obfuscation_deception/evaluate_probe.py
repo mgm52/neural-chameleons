@@ -34,7 +34,7 @@ import sys
 # sys.path set by pip install -e .
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 
-from experiments.shared_utils.utils_misc import load_local_model
+from experiments.shared_utils.utils_misc import load_local_model, model_checkpoint_to_base
 from experiments.shared_utils.utils_testing import (
     test_trainable_metric_on_response_data_module,
     test_trainable_metric_on_positives_only,
@@ -529,33 +529,15 @@ def main():
     output_dir = os.path.join(args.output_dir, f"{timestamp}_deception_probe_evaluation")
     os.makedirs(output_dir, exist_ok=True)
     
-    # Load model first since probe loading needs it
+    # Load model — detect base model from metadata or HF config.json
     logger.print(f"Loading model from: {args.model_dir}")
-    # Read base model name from checkpoint metadata (required)
-    metadata_path = os.path.join(args.model_dir, "model_training_metadata.json")
-    if not os.path.exists(metadata_path):
-        raise FileNotFoundError(
-            f"Model checkpoint metadata not found: {metadata_path}\n"
-            "Cannot determine base model name (gemma_2_9b_instruct, qwen_2_7b_instruct, etc).\n"
-            "This checkpoint may be corrupted or from an old version.\n"
-            "Please retrain the model organism with proper metadata."
-        )
-
-    try:
-        with open(metadata_path, 'r') as f:
-            metadata = json.load(f)
-    except Exception as e:
-        raise ValueError(f"Could not read model metadata from {metadata_path}: {e}")
-
-    base_model_name = metadata.get('model_name', None)
+    base_model_name, _ = model_checkpoint_to_base(args.model_dir)
     if not base_model_name:
         raise ValueError(
-            f"Model metadata missing 'model_name' field in {metadata_path}\n"
-            "Cannot determine base model name (gemma_2_9b_instruct, qwen_2_7b_instruct, etc).\n"
-            "Please retrain the model organism with proper metadata."
+            f"Could not determine base model from checkpoint at {args.model_dir}\n"
+            "Expected either model_training_metadata.json or HF config.json with model_type field."
         )
-
-    logger.print(f"Found base model name in metadata: {base_model_name}")
+    logger.print(f"Detected base model: {base_model_name}")
     model = load_local_model(checkpoint_path=args.model_dir, model_name=base_model_name)
     
     # Load probe and metadata

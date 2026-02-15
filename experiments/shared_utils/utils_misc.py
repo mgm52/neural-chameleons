@@ -157,13 +157,23 @@ def load_word_to_probe_dict(probe_checkpoint_dir: str) -> dict[str, TrainableMet
     return word_to_probe
 
 def model_checkpoint_to_base(checkpoint_path: str):
+    """Detect the base model name and path from a checkpoint directory.
 
+    Tries (in order):
+    1. model_training_metadata.json (generated during training)
+    2. HF config.json model_type field (works for HuggingFace checkpoints)
+
+    Returns:
+        (model_name, base_model_path) — model_name is a string usable as a
+        SPECIAL_TOKEN_CONFIGS key; base_model_path may be None for HF checkpoints.
+    """
     model_dir = os.environ.get("MODEL_DIR", "models")
     if os.path.join(model_dir, "gemma") in checkpoint_path:
-        # It's already a base model! hackhack
+        # It's already a base model
         basename = os.path.basename(checkpoint_path)
         return basename, checkpoint_path
 
+    # Try 1: model_training_metadata.json (generated during our training pipeline)
     metadata_path = Path(checkpoint_path) / "model_training_metadata.json"
     if metadata_path.exists():
         with open(metadata_path, 'r') as f:
@@ -173,7 +183,18 @@ def model_checkpoint_to_base(checkpoint_path: str):
                 base_model_path = Path(os.path.join(model_dir, model_name))
                 print(f"Detected base model from metadata: {model_name}")
                 return model_name, base_model_path
-    print(f"Could not detect base model name from metadata")
+
+    # Try 2: HF config.json model_type (works for HuggingFace checkpoints)
+    config_path = Path(checkpoint_path) / "config.json"
+    if config_path.exists():
+        with open(config_path, 'r') as f:
+            config = json.load(f)
+        model_type = config.get("model_type", "")
+        if model_type:
+            print(f"Detected model family from HF config.json: {model_type}")
+            return model_type, None  # No base_model_path needed; HF checkpoints include tokenizer
+
+    print(f"Could not detect base model from checkpoint at {checkpoint_path}")
     return None, None
 
 
@@ -210,8 +231,15 @@ def load_local_model(checkpoint_path: Optional[str] = None, model_name: str = "l
         # Load and configure tokenizer - try from checkpoint first, fallback to base model
         try:
             tokenizer = AutoTokenizer.from_pretrained(checkpoint_path)
-        except:
-            tokenizer = AutoTokenizer.from_pretrained(str(base_model_path))
+        except Exception:
+            if base_model_path and Path(base_model_path).exists():
+                tokenizer = AutoTokenizer.from_pretrained(str(base_model_path))
+            else:
+                raise ValueError(
+                    f"Could not load tokenizer from checkpoint ({checkpoint_path}) "
+                    f"and no valid base model path available. "
+                    f"Ensure the checkpoint includes tokenizer files."
+                )
         tokenizer.padding_side = "left"
         if tokenizer.pad_token:
             pass

@@ -214,6 +214,12 @@ def main():
         default="experiments/self_obfuscation_pipeline/model_configs.json",
         help="Path to JSON file containing model configurations (default: experiments/self_obfuscation_pipeline/model_configs.json)"
     )
+    parser.add_argument(
+        "--probe-checkpoint",
+        type=str,
+        default=None,
+        help="Override probe checkpoint path (overrides the dispatch table default)"
+    )
     args = parser.parse_args()
 
     # ========== CONFIGURATION SETUP ==========
@@ -340,16 +346,26 @@ def main():
 
     else:
         raise ValueError(f"Unknown model-probe-dataset configuration: {args.model_probe_dataset}")
-    
+
+    # Override probe checkpoint if provided via CLI
+    if args.probe_checkpoint:
+        probe_checkpoint_regular = args.probe_checkpoint
+
     # Get project root
     project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
-    
+
     # Read target layers and probe type from probe checkpoint metadata
     if probe_checkpoint_regular:
         metadata_path = os.path.join(project_root, probe_checkpoint_regular, "metadata.json")
         if not os.path.exists(metadata_path):
-            raise FileNotFoundError(f"metadata.json not found at {metadata_path}")
-        
+            raise FileNotFoundError(
+                f"Probe checkpoint metadata not found: {metadata_path}\n"
+                "Pre-trained probes are not included in the repository.\n"
+                "Options:\n"
+                "  1. Train probes first: python experiments/self_obfuscation_pipeline/run_probe_pipeline.py <checkpoint>\n"
+                "  2. Pass --probe-checkpoint /path/to/your/probes"
+            )
+
         with open(metadata_path, "r") as f:
             metadata = json.load(f)
             if "target_layers" not in metadata:

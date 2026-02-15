@@ -21,7 +21,7 @@ Copy `.env.example` to `.env` and fill in your API keys:
 cp .env.example .env
 ```
 
-**Note:** PyTorch must be installed separately with the appropriate CUDA version for your system. See [pytorch.org](https://pytorch.org/get-started/locally/). Base model weights should be placed in the directory specified by `MODEL_DIR` (default: `./models/`).
+**Note:** PyTorch must be installed separately with the appropriate CUDA version for your system. See [pytorch.org](https://pytorch.org/get-started/locally/). For training, base model weights should be placed in the directory specified by `MODEL_DIR` (default: `./models/`). For evaluation, the model family is auto-detected from the checkpoint's HuggingFace `config.json`.
 
 For development (includes pre-commit hooks, testing):
 ```bash
@@ -44,6 +44,8 @@ The `--model-probe-dataset` string encodes the experimental configuration:
 - `12ablit-synth-4l` = 12 training probes, 4-layer logistic regression
 - `12synth-21PRESET` = 12-concept synthetic dataset (fixed preset)
 
+**Note:** The full pipeline requires pre-trained probe checkpoints which are not included in this repository. You can either train probes first (see below), or pass a custom path with `--probe-checkpoint <path>`.
+
 ### Regenerate paper plots
 
 Figures can be regenerated from the included evaluation results:
@@ -54,13 +56,12 @@ python experiments/self_obfuscation_pipeline/generate_paper_plots.py --plot-type
 
 The script's default arguments point to the result files used in the paper. Run with `--help` to see all options.
 
-### Standalone probe evaluation
+### Probe pipeline (train probes + evaluate)
 
-To evaluate an existing model checkpoint against probes:
+To train and evaluate probes on a model checkpoint:
 
 ```bash
-python experiments/self_obfuscation_pipeline/run_probe_pipeline.py \
-  --model-checkpoint <path-to-checkpoint>
+python experiments/self_obfuscation_pipeline/run_probe_pipeline.py <path-to-checkpoint>
 ```
 
 ## Repository Structure
